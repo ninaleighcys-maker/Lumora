@@ -425,7 +425,7 @@ function notifyBookChapterUpdate(d,book,chapter,actorId){
   for(const r of d.readingProgress||[])if(r.bookId===book.id&&r.userId!==actorId)recipients.add(r.userId);
   const actor=d.users.find(x=>x.id===actorId);
   const message=(actor?.name||'Author')+' added a new chapter to "'+(book.title||'this book')+'".';
-  for(const userId of recipients)notify(d,userId,'new_chapter',actorId,message,'chapter',chapter.id);
+  for(const userId of recipients){notify(d,userId,'new_chapter',actorId,message,'chapter',chapter.id);const n=d.notifications[d.notifications.length-1];if(n&&n.type==='new_chapter'&&n.targetId===chapter.id&&n.userId===userId)n.bookId=book.id;}
 }
 
 async function api(req, res) {
@@ -779,7 +779,7 @@ async function api(req, res) {
     const now=Date.now(); d.notifications.forEach(n=>{if(n.userId===u.id&&!n.readAt)n.readAt=now;}); save(d); return send(res,200,{ok:true});
   }
   if (req.method === 'POST' && p.startsWith('/api/notifications/')) {
-    const nid=p.split('/').pop(); const n=d.notifications.find(x=>x.id===nid&&x.userId===u.id); if(!n)return send(res,404,{error:'Notification not found.'}); n.readAt=Date.now(); save(d); return send(res,200,{ok:true});
+    const nid=p.split('/').pop(); const n=d.notifications.find(x=>x.id===nid&&x.userId===u.id); if(!n)return send(res,404,{error:'Notification not found.'}); n.readAt=Date.now(); save(d); return send(res,200,{ok:true,notification:n});
   }
 
   if (req.method === 'GET' && p.startsWith('/api/posts/')) {
