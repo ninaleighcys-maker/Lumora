@@ -316,7 +316,7 @@ function esc(s=''){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;'
 function attr(s=''){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/'/g,'&#39;')}
 start().catch(e=>{console.error(e);auth()});
 
-<script>
+
 (function(){
   'use strict';
   const originalShell=window.shell, originalRender=window.render, originalReader=window.reader, originalNewBook=window.newBook;
