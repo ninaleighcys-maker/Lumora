@@ -1,0 +1,14 @@
+{
+  "name": "lumora-fullstack",
+  "version": "1.2.0",
+  "private": true,
+  "description": "Lumora - writing, reading, diary and social platform",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "nodemailer": "^7.0.6",
+    "pg": "^8.16.3"
+  }
+}

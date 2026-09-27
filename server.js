@@ -1,0 +1,780 @@
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const { Pool } = require('pg');
+
+const PORT = process.env.PORT || 3000;
+const ROOT = __dirname;
+const PUBLIC = path.join(ROOT, 'public');
+// Keep user data outside the website source folder by default so replacing/updating
+// the Lumora code does not overwrite follows, accounts, messages, books, etc.
+// Set LUMORA_DATA_DIR when you want a specific persistent data location.
+const DEFAULT_DATA_DIR = process.env.APPDATA
+  ? path.join(process.env.APPDATA, 'Lumora')
+  : path.join(process.env.HOME || process.env.USERPROFILE || ROOT, '.lumora-data');
+const DATA_DIR = process.env.LUMORA_DATA_DIR || DEFAULT_DATA_DIR;
+const DB_FILE = process.env.LUMORA_DB_FILE || path.join(DATA_DIR, 'db.json');
+const LEGACY_DB_FILE = path.join(ROOT, 'data', 'db.json');
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// Optional managed PostgreSQL storage for public deployments. The existing JSON
+// database remains available for local development. We keep the same data shape
+// in one PostgreSQL row so the rest of Lumora's feature code does not need a rewrite.
+const DATABASE_URL = process.env.DATABASE_URL || '';
+let remotePool = null;
+let remoteDb = null;
+let remoteSaveQueue = Promise.resolve();
+
+const EMPTY_DB = {
+  users: [], sessions: [], emailVerifications: [], books: [], diaries: [],
+  posts: [], comments: [], highlights: [], bookmarks: [], follows: [], followRequests: [], friendRequests: [], friendships: [], messages: [], messageRequests: [], notifications: [], libraries: [], readingProgress: [], favorites: [], bookReads: [], chapterReads: []
+};
+if (!fs.existsSync(DB_FILE)) {
+  // One-time migration from the old project-local database. This keeps existing
+  // follows and all other user data when the enhanced project is opened.
+  if (DB_FILE !== LEGACY_DB_FILE && fs.existsSync(LEGACY_DB_FILE)) {
+    fs.copyFileSync(LEGACY_DB_FILE, DB_FILE);
+  } else {
+    fs.writeFileSync(DB_FILE, JSON.stringify(EMPTY_DB, null, 2));
+  }
+}
+
+function normalizeDb(d) {
+  d = d && typeof d === 'object' ? d : {};
+  for (const k of Object.keys(EMPTY_DB)) if (!Array.isArray(d[k])) d[k] = [];
+  let changed = false;
+  for (const b of d.books) {
+    const font = storyFont(b.fontFamily);
+    if (b.fontFamily !== font) { b.fontFamily = font; changed = true; }
+    if (!Array.isArray(b.chapters)) { b.chapters = []; changed = true; }
+    for (const c of b.chapters) if (c.contentHtml === undefined) { c.contentHtml = ''; changed = true; }
+  }
+  if (changed) save(d);
+  return d;
+}
+function db() {
+  if (remoteDb) return remoteDb;
+  return normalizeDb(JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
+}
+function save(d) {
+  if (remotePool && remoteDb) {
+    remoteDb = normalizeDb(d);
+    const snapshot = JSON.parse(JSON.stringify(remoteDb));
+    remoteSaveQueue = remoteSaveQueue
+      .then(() => remotePool.query('UPDATE lumora_state SET data = $1::jsonb, updated_at = NOW() WHERE id = 1', [JSON.stringify(snapshot)]))
+      .catch(err => console.error('Remote database save failed:', err.message));
+    return;
+  }
+  fs.writeFileSync(DB_FILE, JSON.stringify(d, null, 2));
+}
+async function initRemoteDatabase() {
+  if (!DATABASE_URL) return;
+  remotePool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 });
+  await remotePool.query(`CREATE TABLE IF NOT EXISTS lumora_state (id INTEGER PRIMARY KEY, data JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
+  const result = await remotePool.query('SELECT data FROM lumora_state WHERE id = 1');
+  if (result.rows.length) {
+    remoteDb = normalizeDb(result.rows[0].data);
+  } else {
+    const local = normalizeDb(JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
+    remoteDb = local;
+    await remotePool.query('INSERT INTO lumora_state (id, data) VALUES (1, $1::jsonb)', [JSON.stringify(local)]);
+  }
+  console.log('Lumora is using managed PostgreSQL storage.');
+}
+async function closeRemoteDatabase() {
+  if (remotePool) await remotePool.end();
+}
+const TRASH_DAYS = 30;
+function notify(d, userId, type, actorId, message, targetType='', targetId='') {
+  if (!userId || !actorId || userId === actorId) return;
+  d.notifications.push({ id:id(), userId, type, actorId, message, targetType, targetId, createdAt:Date.now(), readAt:null });
+}
+function activeOnly(arr) { return arr.filter(x => !x.deletedAt); }
+function cleanupTrash(d) {
+  const now = Date.now();
+  let changed = false;
+  const expired = (x) => x.deletedAt && (x.deletedUntil || (x.deletedAt + TRASH_DAYS*24*60*60*1000)) <= now;
+  for (const type of ['posts','diaries','books']) {
+    const arr = d[type];
+    const doomed = arr.filter(expired);
+    if (!doomed.length) continue;
+    for (const item of doomed) {
+      if (type === 'books') {
+        const chapterIds = (item.chapters||[]).map(c=>c.id);
+        d.comments = d.comments.filter(c => !(c.targetType === 'chapter' && chapterIds.includes(c.targetId)));
+        d.highlights = d.highlights.filter(h => !chapterIds.includes(h.chapterId));
+        d.bookmarks = d.bookmarks.filter(b => !chapterIds.includes(b.chapterId));
+        d.libraries = d.libraries.filter(l => l.bookId !== item.id);
+        d.favorites = d.favorites.filter(f => f.bookId !== item.id);
+        d.bookReads = d.bookReads.filter(r => r.bookId !== item.id);
+        d.chapterReads = d.chapterReads.filter(r => r.bookId !== item.id);
+      } else {
+        d.comments = d.comments.filter(c => !(c.targetType === (type==='posts'?'post':'diary') && c.targetId === item.id));
+      }
+      d.notifications = d.notifications.filter(n => !(n.targetType === type.slice(0,-1) && n.targetId === item.id));
+    }
+    d[type] = arr.filter(x => !expired(x));
+    changed = true;
+  }
+  if (changed) save(d);
+  return changed;
+}
+function markTrash(item) {
+  const now = Date.now();
+  item.deletedAt = now;
+  item.deletedUntil = now + TRASH_DAYS*24*60*60*1000;
+  item.updatedAt = now;
+}
+function contentIsActive(item) { return !!item && !item.deletedAt; }
+function id() { return crypto.randomUUID(); }
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(':');
+  const test = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(test, 'hex'));
+}
+function cookie(name, value, maxAge) {
+  return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; ${maxAge === 0 ? 'Max-Age=0' : `Max-Age=${maxAge}`}`;
+}
+function getCookies(req) {
+  return Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(x => {
+    const i = x.indexOf('=');
+    return [x.slice(0, i).trim(), decodeURIComponent(x.slice(i + 1))];
+  }));
+}
+function userFrom(req) {
+  const token = getCookies(req).lumora_session;
+  if (!token) return null;
+  const d = db();
+  const s = d.sessions.find(x => x.token === token && x.expiresAt > Date.now());
+  if (!s) return null;
+  return d.users.find(u => u.id === s.userId) || null;
+}
+function safeUser(u) {
+  return u && { id: u.id, username: u.username, name: u.name, email: u.email, emailVerified: !!u.emailVerified, bio: u.bio, avatarUrl: u.avatarUrl || '', coverUrl: u.coverUrl || '', favoriteQuote: u.favoriteQuote || '', theme: u.theme || 'Rose', accountPrivacy: u.accountPrivacy || 'public', messagePermission: u.messagePermission || 'everyone', createdAt: u.createdAt };
+}
+function send(res, status, data, headers = {}) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
+  res.end(JSON.stringify(data));
+}
+function body(req) {
+  return new Promise((resolve, reject) => {
+    let s = '';
+    req.on('data', c => {
+      s += c;
+      if (s.length > 12e6) { req.destroy(); reject(new Error('Body too large')); }
+    });
+    req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch { reject(new Error('Invalid JSON')); } });
+    req.on('error', reject);
+  });
+}
+function requireUser(req, res, options = {}) {
+  const u = userFrom(req);
+  if (!u) { send(res, 401, { error: 'Please log in first.' }); return null; }
+  if (!u.emailVerified && !options.allowUnverified) {
+    send(res, 403, { error: 'Please verify your email before using Lumora.', code: 'EMAIL_NOT_VERIFIED' });
+    return null;
+  }
+  return u;
+}
+function publicUser(d, userId) {
+  const u = d.users.find(x => x.id === userId);
+  return u ? { id: u.id, username: u.username, name: u.name, avatarUrl: u.avatarUrl || '' } : { id: userId, username: 'Unknown', name: 'Unknown', avatarUrl: '' };
+}
+function isFollowing(d, followerId, followingId) { return d.follows.some(x => x.followerId === followerId && x.followingId === followingId); }
+function areFriends(d, a, b) { return d.friendships.some(x => (x.userA === a && x.userB === b) || (x.userA === b && x.userB === a)); }
+function accountVisible(d, ownerId, viewer) {
+  if (!viewer || ownerId === viewer.id) return true;
+  const owner = d.users.find(x => x.id === ownerId);
+  if (!owner || (owner.accountPrivacy || 'public') === 'public') return true;
+  return isFollowing(d, viewer.id, ownerId) || areFriends(d, viewer.id, ownerId);
+}
+function visibilityAllowed(d, visibility, ownerId, viewer) {
+  if (ownerId === viewer.id) return true;
+  if (!accountVisible(d, ownerId, viewer)) return false;
+  if (visibility === 'public') return true;
+  if (visibility === 'followers') return isFollowing(d, viewer.id, ownerId);
+  if (visibility === 'friends') return areFriends(d, viewer.id, ownerId);
+  return false;
+}
+function friendshipPair(a,b){return a<b?{userA:a,userB:b}:{userA:b,userB:a};}
+function syncMutualFriendship(d,a,b){
+  if(a===b || !isFollowing(d,a,b) || !isFollowing(d,b,a)) return false;
+  if(!areFriends(d,a,b)) { d.friendships.push({id:id(),...friendshipPair(a,b),createdAt:Date.now()}); return true; }
+  return false;
+}
+function syncAllMutualFriendships(d){
+  let changed=false;
+  for(const f of d.follows){ if(syncMutualFriendship(d,f.followerId,f.followingId)) changed=true; }
+  return changed;
+}
+function syncFriendshipsFromFollows(d){
+  const before=d.friendships.length;
+  d.friendships=d.friendships.filter(fr=>isFollowing(d,fr.userA,fr.userB)&&isFollowing(d,fr.userB,fr.userA));
+  for(const f of d.follows) syncMutualFriendship(d,f.followerId,f.followingId);
+  return d.friendships.length!==before;
+}
+function cleanSocial(d) {
+  let changed=false;
+  for (const u of d.users) { if (!u.accountPrivacy) { u.accountPrivacy = 'public'; changed=true; } if (!u.messagePermission) { u.messagePermission = 'everyone'; changed=true; } }
+  for (const k of ['follows','followRequests','friendRequests','friendships','messages','messageRequests','readingProgress','libraries','favorites','bookReads','chapterReads']) if (!Array.isArray(d[k])) { d[k] = []; changed=true; }
+  if(syncAllMutualFriendships(d)) changed=true;
+  if(syncFriendshipsFromFollows(d)) changed=true;
+  if(changed) save(d);
+}
+function expirePosts(d) {
+  let changed = false;
+  const now = Date.now();
+  for (const p of d.posts) {
+    if (p.visibility === 'public' && !p.archivedAt && now - p.createdAt >= 24 * 60 * 60 * 1000) { p.archivedAt = now; changed = true; }
+  }
+  if (changed) save(d);
+}
+function sanitizeStoryHtml(value) {
+  return String(value || '')
+    .replace(/<\s*(script|style|iframe|object|embed|link|meta)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+    .replace(/<\s*(script|style|iframe|object|embed|link|meta)[^>]*\/?>/gi, '')
+    .replace(/\s+(?:on[a-z]+|style|class|id)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/javascript\s*:/gi, '')
+    .replace(/<(?!\/?(?:b|strong|i|em|u|br|p|div)\b)[^>]*>/gi, '')
+    .replace(/<\s*strong\s*>/gi, '<b>').replace(/<\s*\/\s*strong\s*>/gi, '</b>')
+    .replace(/<\s*em\s*>/gi, '<i>').replace(/<\s*\/\s*em\s*>/gi, '</i>');
+}
+function storyFont(value) {
+  const allowed = ['Roboto','Sans-serif','Arial','Calibri','Source Sans Pro','DM Pro'];
+  return allowed.includes(String(value || '')) ? String(value) : 'Roboto';
+}
+function bookStats(d, b, viewerId) {
+  const reads = Math.max(d.bookReads.filter(x => x.bookId === b.id).length, Number(b.readingCount||0));
+  const library = d.libraries.filter(x => x.bookId === b.id).reduce((set,x) => set.add(x.userId), new Set()).size;
+  const favorites = d.favorites.filter(x => x.bookId === b.id).reduce((set,x) => set.add(x.userId), new Set()).size;
+  return { reads, libraryAdds: library, favorites, favorited: !!viewerId && d.favorites.some(x => x.bookId === b.id && x.userId === viewerId) };
+}
+function chapterReadCount(d, chapterId) { return d.chapterReads.filter(x => x.chapterId === chapterId).length; }
+function publicBook(b, d, viewerId) {
+  const stats = bookStats(d, b, viewerId);
+  return {
+    id: b.id, userId: b.userId, title: b.title, description: b.description, cover: b.cover,
+    genre: b.genre, tags: Array.isArray(b.tags) ? b.tags : [], visibility: b.visibility, readingCount: stats.reads,
+    fontFamily: storyFont(b.fontFamily), stats,
+    createdAt: b.createdAt, updatedAt: b.updatedAt, author: publicUser(d, b.userId),
+    chapters: b.chapters.map(c => ({ id: c.id, title: c.title, readCount: chapterReadCount(d, c.id) }))
+  };
+}
+function publicPost(p, d) {
+  return { ...p, author: publicUser(d, p.userId), commentCount: d.comments.filter(c => c.targetType === 'post' && c.targetId === p.id).length };
+}
+function publicDiary(x, d) {
+  return { ...x, author: publicUser(d, x.userId), commentCount: d.comments.filter(c => c.targetType === 'diary' && c.targetId === x.id).length };
+}
+function publicChapter(c) { return { id: c.id, title: c.title, content: c.content || '', contentHtml: sanitizeStoryHtml(c.contentHtml || '') }; }
+const GENRES = ['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
+function cleanTags(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(x => String(x).trim().replace(/^#/, '').replace(/[^\p{L}\p{N}_-]/gu, '').slice(0,40)).filter(Boolean))].slice(0,20);
+}
+function searchable(value) { return String(value || '').toLowerCase(); }
+
+
+async function sendVerificationEmail(u, token) {
+  const base = process.env.APP_URL || `http://localhost:${PORT}`;
+  const verifyUrl = `${base}/api/verify-email?token=${encodeURIComponent(token)}`;
+  const smtpHost = process.env.SMTP_HOST;
+  if (!smtpHost) {
+    console.log(`\n[Lumora email verification] ${u.email}: ${verifyUrl}\n`);
+    return { delivered: false, previewUrl: verifyUrl };
+  }
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
+    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
+  });
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: u.email,
+    subject: 'Verify your Lumora email',
+    text: `Welcome to Lumora. Verify your email here: ${verifyUrl}`,
+    html: `<p>Welcome to Lumora.</p><p><a href="${verifyUrl}">Verify your email</a></p><p>This link expires in 24 hours.</p>`
+  });
+  return { delivered: true };
+}
+function createVerification(d, u) {
+  const token = crypto.randomBytes(32).toString('hex');
+  d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
+  d.emailVerifications.push({ token, userId: u.id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+  return token;
+}
+function targetAllowed(d, type, targetId, u) {
+  if (type === 'post') { const p = d.posts.find(x => x.id === targetId); return p && contentIsActive(p) && (!p.archivedAt || p.userId === u.id) && visibilityAllowed(d, p.visibility || 'private', p.userId, u) ? p : null; }
+  if (type === 'diary') { const x = d.diaries.find(x => x.id === targetId); return x && contentIsActive(x) && visibilityAllowed(d, x.visibility || 'private', x.userId, u) ? x : null; }
+  if (type === 'chapter') {
+    for (const b of d.books) {
+      const c = b.chapters.find(c => c.id === targetId);
+      if (c && (b.visibility === 'public' || b.userId === u.id)) return { ...c, book: b };
+    }
+  }
+  return null;
+}
+
+function socialCounts(d, userId) { return { followers:d.follows.filter(x=>x.followingId===userId).length, following:d.follows.filter(x=>x.followerId===userId).length, friends:d.friendships.filter(x=>x.userA===userId||x.userB===userId).length }; }
+function socialSummary(d,u) { return {notifications:d.notifications.filter(n=>n.userId===u.id&&!n.readAt).length,...socialCounts(d,u.id), followRequests:d.followRequests.filter(x=>x.toId===u.id&&x.status==='pending').length, friendRequests:d.friendRequests.filter(x=>x.toId===u.id&&x.status==='pending').length, messageRequests:d.messageRequests.filter(x=>x.toId===u.id&&x.status==='pending').length}; }
+function messagingAllowed(d,from,to) {
+  if (areFriends(d,from.id,to.id)) return true;
+  const p=to.messagePermission||'everyone';
+  if(p==='everyone') return true;
+  if(p==='followers') return isFollowing(d,from.id,to.id);
+  if(p==='friends') return false;
+  return false;
+}
+
+async function api(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const p = url.pathname;
+
+  if (req.method === 'GET' && p === '/api/me') return send(res, 200, { user: safeUser(userFrom(req)) });
+
+  if (req.method === 'GET' && p === '/api/verify-email') {
+    const token = url.searchParams.get('token');
+    const d = db();
+    const v = d.emailVerifications.find(x => x.token === token && x.expiresAt > Date.now());
+    if (!v) return send(res, 400, { error: 'This verification link is invalid or expired.' });
+    const u = d.users.find(x => x.id === v.userId);
+    if (!u) return send(res, 404, { error: 'Account not found.' });
+    u.emailVerified = true;
+    d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
+    save(d);
+    return send(res, 200, { ok: true, message: 'Email verified. You can now log in.' });
+  }
+
+  if (req.method === 'POST' && p === '/api/signup') {
+    const x = await body(req);
+    const email = String(x.email || '').trim().toLowerCase();
+    const username = String(x.username || '').trim().toLowerCase();
+    const name = String(x.name || username).trim();
+    const password = String(x.password || '');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return send(res, 400, { error: 'Please enter a valid email address.' });
+    if (!/^[a-z0-9_]{3,24}$/.test(username)) return send(res, 400, { error: 'Username must be 3-24 characters using letters, numbers, or underscores.' });
+    if (password.length < 8) return send(res, 400, { error: 'Password must be at least 8 characters.' });
+    const d = db();
+    if (d.users.some(u => u.username === username)) return send(res, 409, { error: 'Username already exists.' });
+    if (d.users.some(u => u.email === email)) return send(res, 409, { error: 'Email is already registered.' });
+    const u = { id: id(), username, email, name, bio: '', avatarUrl: '', coverUrl: '', favoriteQuote: '', passwordHash: hashPassword(password), emailVerified: false, createdAt: Date.now() };
+    d.users.push(u);
+    const token = createVerification(d, u);
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    d.sessions.push({ token: sessionToken, userId: u.id, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+    save(d);
+    let delivery = { delivered: false };
+    try { delivery = await sendVerificationEmail(u, token); } catch (e) { console.error('Verification email failed:', e.message); }
+    return send(res, 201, { user: safeUser(u), requiresVerification: true, previewUrl: delivery.previewUrl || null },
+      { 'Set-Cookie': cookie('lumora_session', sessionToken, 30 * 24 * 60 * 60) });
+  }
+
+  if (req.method === 'POST' && p === '/api/resend-verification') {
+    const u = userFrom(req);
+    if (!u) return send(res, 401, { error: 'Please log in first.' });
+    if (u.emailVerified) return send(res, 400, { error: 'Your email is already verified.' });
+    const d = db();
+    const token = createVerification(d, u); save(d);
+    try {
+      const delivery = await sendVerificationEmail(u, token);
+      return send(res, 200, { ok: true, previewUrl: delivery.previewUrl || null });
+    } catch (e) {
+      console.error(e); return send(res, 500, { error: 'Could not send the verification email.' });
+    }
+  }
+
+  if (req.method === 'POST' && p === '/api/login') {
+    const x = await body(req);
+    const identifier = String(x.identifier || x.username || '').trim().toLowerCase();
+    const password = String(x.password || '');
+    const d = db();
+    const u = d.users.find(u => u.username === identifier || u.email === identifier);
+    if (!u || !verifyPassword(password, u.passwordHash)) return send(res, 401, { error: 'Invalid email/username or password.' });
+    const token = crypto.randomBytes(32).toString('hex');
+    d.sessions = d.sessions.filter(s => s.userId !== u.id || s.expiresAt <= Date.now());
+    d.sessions.push({ token, userId: u.id, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+    save(d);
+    return send(res, 200, { user: safeUser(u), requiresVerification: !u.emailVerified },
+      { 'Set-Cookie': cookie('lumora_session', token, 30 * 24 * 60 * 60) });
+  }
+
+  if (req.method === 'POST' && p === '/api/logout') {
+    const token = getCookies(req).lumora_session;
+    const d = db(); d.sessions = d.sessions.filter(s => s.token !== token); save(d);
+    return send(res, 200, { ok: true }, { 'Set-Cookie': cookie('lumora_session', '', 0) });
+  }
+
+  const u = requireUser(req, res);
+  if (!u) return;
+  const d = db();
+  cleanSocial(d); expirePosts(d); cleanupTrash(d);
+  for (const b of d.books) if (!Array.isArray(b.tags)) b.tags=[];
+  for (const x of d.diaries) { if (x.weather===undefined) x.weather=''; if (x.season===undefined) x.season=''; }
+
+  if (req.method === 'GET' && p === '/api/dashboard') {
+    return send(res, 200, {
+      user: safeUser(u),
+      books: d.books.filter(b => b.userId === u.id && !b.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt).map(b => ({...b, tags: Array.isArray(b.tags)?b.tags:[], stats: bookStats(d,b,u.id), fontFamily: storyFont(b.fontFamily)})),
+      diaries: d.diaries.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt),
+      posts: d.posts.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.createdAt-a.createdAt).map(p => publicPost(p,d)),
+      archivedPosts: d.posts.filter(x => x.userId === u.id && x.archivedAt && !x.deletedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d)),
+      libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
+      continueReading: d.readingProgress.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d), chapterId:x.chapterId, pageNumber:x.pageNumber, progressUpdatedAt:x.updatedAt} : null; }).filter(Boolean).sort((a,b)=>(b.progressUpdatedAt||0)-(a.progressUpdatedAt||0)),
+      social: socialSummary(d,u)
+    });
+  }
+
+  if (req.method === 'GET' && p === '/api/feed') {
+    // News Feed is Shared Thoughts only (the existing posts collection),
+    // de-duplicated by the original post ID and sorted by persisted creation time.
+    const posts = [...new Map(
+      d.posts
+        .filter(x => !x.archivedAt && !x.deletedAt && visibilityAllowed(d, x.visibility || 'private', x.userId, u))
+        .map(x => [x.id, x])
+    ).values()]
+      .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0) || String(b.id).localeCompare(String(a.id)))
+      .map(x=>publicPost(x,d));
+    return send(res, 200, { posts });
+  }
+  if (req.method === 'GET' && p === '/api/discover/books') {
+    const q=searchable(url.searchParams.get('q'));
+    const genre=String(url.searchParams.get('genre')||'');
+    const tag=searchable(url.searchParams.get('tag'));
+    const allowed = b => b.visibility === 'public' && !b.deletedAt && accountVisible(d,b.userId,u);
+    const matches = b => (!genre || b.genre===genre) && (!tag || (b.tags||[]).some(t=>searchable(t)===tag)) && (!q || [b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q)));
+    const base = d.books.filter(b => allowed(b) && matches(b));
+    const score = b => { const st=bookStats(d,b,u.id); const age=Math.max(0,Date.now()-(b.updatedAt||b.createdAt||Date.now())); const freshness=Math.max(0,30-Math.floor(age/86400000)); const queryBoost=q&&[b.title,b.description,b.genre,(b.tags||[]).join(' ')].some(v=>searchable(v).includes(q))?80:0; return st.reads*4+st.libraryAdds*3+st.favorites*3+freshness+queryBoost; };
+    const recommendations = [...base].sort((a,b)=>score(b)-score(a) || b.updatedAt-a.updatedAt).slice(0,12).map(b=>publicBook(b,d,u.id));
+    const books = [...base].sort((a,b)=>b.updatedAt-a.updatedAt).map(b=>publicBook(b,d,u.id));
+    return send(res, 200, { books, recommendations, genres: GENRES });
+  }
+  if (req.method === 'GET' && p === '/api/chika') {
+    // Chika is intentionally diary-only. Keep the query server-side and apply
+    // the same privacy rules used by the rest of Lumora.
+    const diaries = [...new Map(
+      d.diaries
+        .filter(x => !x.deletedAt && visibilityAllowed(d, x.visibility || 'private', x.userId, u))
+        .map(x => [x.id, x])
+    ).values()]
+      .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0) || String(b.id).localeCompare(String(a.id)))
+      .map(x=>publicDiary(x,d));
+    return send(res, 200, { diaries });
+  }
+
+  if (req.method === 'GET' && p === '/api/search') {
+    const q=searchable(url.searchParams.get('q')).trim();
+    if(!q) return send(res,200,{books:[],people:[],diaries:[],posts:[]});
+    const people=d.users.filter(x=>accountVisible(d,x.id,u)&& (searchable(x.username).includes(q)||searchable(x.name).includes(q))).map(x=>({id:x.id,username:x.username,name:x.name,bio:x.bio,avatarUrl:x.avatarUrl||''})).slice(0,20);
+    const books=d.books.filter(b=>b.visibility==='public' && !b.deletedAt && accountVisible(d,b.userId,u)).filter(b=>[b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(b=>publicBook(b,d));
+    const diaries=d.diaries.filter(x=>!x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.title,x.content,x.mood,x.weather,x.season,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicDiary(x,d));
+    const posts=d.posts.filter(x=>!x.archivedAt && !x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.content,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicPost(x,d));
+    return send(res,200,{books,people,diaries,posts});
+  }
+  if (req.method === 'PUT' && p === '/api/profile') {
+    const u = requireUser(req, res); if (!u) return;
+    const x = await body(req); const d = db();
+    const current = d.users.find(user => user.id === u.id);
+    if (!current) return send(res,404,{error:'Account not found.'});
+    const name = String(x.name || '').trim().slice(0,80);
+    const bio = String(x.bio || '').trim().slice(0,500);
+    const avatarUrl = String(x.avatarUrl || '').trim().slice(0,5000000);
+    const coverUrl = String(x.coverUrl || '').trim().slice(0,5000000);
+    const favoriteQuote = String(x.favoriteQuote || '').trim().slice(0,300);
+    const accountPrivacy = x.accountPrivacy === 'private' ? 'private' : 'public';
+    const messagePermission = ['everyone','followers','friends','none'].includes(x.messagePermission) ? x.messagePermission : (current.messagePermission || 'everyone');
+    const theme = String(x.theme || current.theme || 'Rose').trim().slice(0,60);
+    if (!name) return send(res,400,{error:'Display name is required.'});
+    current.name=name; current.bio=bio; current.avatarUrl=avatarUrl; current.coverUrl=coverUrl; current.favoriteQuote=favoriteQuote; current.accountPrivacy=accountPrivacy; current.messagePermission=messagePermission; current.theme=theme;
+    save(d); return send(res,200,{user:safeUser(current)});
+  }
+
+  if (req.method === 'GET' && p.startsWith('/api/users/')) {
+    const userId=p.split('/').pop(); const profile=d.users.find(x=>x.id===userId);
+    if(!profile) return send(res,404,{error:'User not found.'});
+    const visible = accountVisible(d,userId,u);
+    const relationship = { following:isFollowing(d,u.id,userId), follower:isFollowing(d,userId,u.id), friends:areFriends(d,u.id,userId), pendingFollow:!!d.followRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending'), pendingFriend:!!d.friendRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending') };
+    const books=visible?d.books.filter(b=>b.userId===userId&&!b.deletedAt&&b.visibility==='public').sort((a,b)=>b.updatedAt-a.updatedAt).map(b=>publicBook(b,d)):[];
+    const diaries=visible?d.diaries.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicDiary(x,d)):[];
+    const posts=visible?d.posts.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)&&!x.archivedAt).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicPost(x,d)):[];
+    return send(res,200,{user:{id:profile.id,username:profile.username,name:profile.name,bio:visible?profile.bio:'',avatarUrl:profile.avatarUrl||'',coverUrl:visible?(profile.coverUrl||''):'',favoriteQuote:visible?(profile.favoriteQuote||''):'',createdAt:profile.createdAt,accountPrivacy:profile.accountPrivacy||'public'},relationship,counts:socialCounts(d,userId),books,diaries,posts});
+  }
+
+  if (req.method === 'GET' && p.startsWith('/api/people/')) {
+    const type=p.split('/').pop(); let ids=[];
+    if(type==='followers') ids=d.follows.filter(x=>x.followingId===u.id).map(x=>x.followerId);
+    else if(type==='following') ids=d.follows.filter(x=>x.followerId===u.id).map(x=>x.followingId);
+    else if(type==='friends') ids=d.friendships.filter(x=>x.userA===u.id||x.userB===u.id).map(x=>x.userA===u.id?x.userB:x.userA);
+    else return send(res,400,{error:'Unknown people list.'});
+    return send(res,200,{type,people:ids.map(x=>publicUser(d,x))});
+  }
+  if (req.method === 'GET' && p === '/api/social') {
+    return send(res,200,{...socialSummary(d,u),followRequests:d.followRequests.filter(x=>x.toId===u.id&&x.status==='pending').map(x=>({...x,from:publicUser(d,x.fromId)})),friendRequests:d.friendRequests.filter(x=>x.toId===u.id&&x.status==='pending').map(x=>({...x,from:publicUser(d,x.fromId)})),messageRequests:d.messageRequests.filter(x=>x.toId===u.id&&x.status==='pending').map(x=>({...x,from:publicUser(d,x.fromId),message:x.message}))});
+  }
+  if (req.method === 'POST' && p.startsWith('/api/follow/')) {
+    const targetId=p.split('/').pop();
+    if(targetId===u.id)return send(res,400,{error:'You cannot follow yourself.'});
+    const target=d.users.find(x=>x.id===targetId);
+    if(!target)return send(res,404,{error:'User not found.'});
+    if(isFollowing(d,u.id,targetId)) return send(res,200,{following:true,pending:false,friends:areFriends(d,u.id,targetId)});
+    const pending=d.followRequests.find(x=>x.fromId===u.id&&x.toId===targetId&&x.status==='pending');
+    if(target.accountPrivacy==='private'){
+      if(!pending) { d.followRequests.push({id:id(),fromId:u.id,toId:targetId,status:'pending',createdAt:Date.now()}); notify(d,targetId,'follow_request',u.id,`${u.name || '@'+u.username} wants to follow you.`,'user',u.id); }
+    }else{
+      d.followRequests=d.followRequests.filter(x=>!(x.fromId===u.id&&x.toId===targetId&&x.status==='pending'));
+      d.follows.push({id:id(),followerId:u.id,followingId:targetId,createdAt:Date.now()});
+      syncMutualFriendship(d,u.id,targetId);
+      notify(d,targetId,'follow',u.id,`${u.name || '@'+u.username} followed you.`,'user',u.id);
+    }
+    save(d);
+    return send(res,200,{following:isFollowing(d,u.id,targetId),pending:!!d.followRequests.find(x=>x.fromId===u.id&&x.toId===targetId&&x.status==='pending'),friends:areFriends(d,u.id,targetId)});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/follow/')) {
+    const targetId=p.split('/').pop();
+    d.follows=d.follows.filter(x=>!(x.followerId===u.id&&x.followingId===targetId));
+    d.followRequests=d.followRequests.filter(x=>!(x.fromId===u.id&&x.toId===targetId));
+    syncFriendshipsFromFollows(d);
+    save(d);
+    return send(res,200,{ok:true,following:false,pending:false,friends:areFriends(d,u.id,targetId)});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/followers/')) {
+    const followerId=p.split('/').pop();
+    if(followerId===u.id)return send(res,400,{error:'You cannot remove yourself as a follower.'});
+    const target=d.follows.find(x=>x.followerId===followerId&&x.followingId===u.id);
+    if(!target)return send(res,404,{error:'Follower not found.'});
+    d.follows=d.follows.filter(x=>!(x.followerId===followerId&&x.followingId===u.id));
+    syncFriendshipsFromFollows(d);
+    save(d);
+    return send(res,200,{ok:true,removed:true});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/follow-requests/')) {
+    const targetId=p.split('/').pop();
+    const before=d.followRequests.length;
+    d.followRequests=d.followRequests.filter(x=>!(x.fromId===u.id&&x.toId===targetId&&x.status==='pending'));
+    if(d.followRequests.length===before)return send(res,404,{error:'Follow request not found.'});
+    save(d);
+    return send(res,200,{ok:true,cancelled:true});
+  }
+  if (req.method === 'POST' && p.startsWith('/api/follow-requests/') && p.endsWith('/accept')) { const rid=p.split('/')[3]; const r=d.followRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Follow request not found.'}); r.status='accepted'; if(!isFollowing(d,r.fromId,u.id)){d.follows.push({id:id(),followerId:r.fromId,followingId:u.id,createdAt:Date.now()}); notify(d,r.fromId,'follow',u.id,`${u.name || '@'+u.username} accepted your follow request.`,'user',u.id);} syncMutualFriendship(d,r.fromId,u.id); save(d); return send(res,200,{ok:true,friends:areFriends(d,r.fromId,u.id)}); }
+  if (req.method === 'POST' && p.startsWith('/api/follow-requests/') && p.endsWith('/decline')) { const rid=p.split('/')[3]; const r=d.followRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Follow request not found.'}); r.status='declined'; save(d); return send(res,200,{ok:true}); }
+  if (req.method === 'GET' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const existingConversation=d.messages.some(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)); const allowed=messagingAllowed(d,u,other)||existingConversation; if(!allowed)return send(res,403,{error:'Messaging is not open between you yet. Send a message request instead.'}); return send(res,200,{messages:d.messages.filter(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)).sort((a,b)=>a.createdAt-b.createdAt).map(x=>({...x,from:publicUser(d,x.fromId)})),user:publicUser(d,otherId)}); }
+  if (req.method === 'POST' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const x=await body(req); const content=String(x.content||'').trim().slice(0,3000); if(!content)return send(res,400,{error:'Message cannot be empty.'}); const existingConversation=d.messages.some(m=>(m.fromId===u.id&&m.toId===otherId)||(m.fromId===otherId&&m.toId===u.id)); if(messagingAllowed(d,u,other)||existingConversation){const m={id:id(),fromId:u.id,toId:otherId,content,createdAt:Date.now()};d.messages.push(m);notify(d,otherId,'message',u.id,`${u.name || '@'+u.username} sent you a message.`,'user',u.id);save(d);return send(res,201,{message:m,request:false});} if((other.messagePermission||'everyone')==='none')return send(res,403,{error:'This user is not accepting message requests from strangers.'}); const mr={id:id(),fromId:u.id,toId:otherId,message:content,status:'pending',createdAt:Date.now()}; d.messageRequests.push(mr);notify(d,otherId,'message',u.id,`${u.name || '@'+u.username} sent you a message request.`,'user',u.id);save(d);return send(res,201,{request:true,messageRequest:{...mr,from:publicUser(d,u.id)}}); }
+  if (req.method === 'POST' && p.startsWith('/api/message-requests/') && p.endsWith('/accept')) { const rid=p.split('/')[3]; const r=d.messageRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Message request not found.'}); r.status='accepted'; d.messages.push({id:id(),fromId:r.fromId,toId:u.id,content:r.message,createdAt:r.createdAt}); save(d); return send(res,200,{ok:true}); }
+  if (req.method === 'POST' && p.startsWith('/api/message-requests/') && p.endsWith('/decline')) { const rid=p.split('/')[3]; const r=d.messageRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Message request not found.'}); r.status='declined'; save(d); return send(res,200,{ok:true}); }
+
+
+  if (req.method === 'GET' && p === '/api/notifications') {
+    const items=d.notifications.filter(n=>n.userId===u.id).sort((a,b)=>b.createdAt-a.createdAt).slice(0,100).map(n=>({...n,actor:publicUser(d,n.actorId)}));
+    return send(res,200,{notifications:items,unread:items.filter(n=>!n.readAt).length});
+  }
+  if (req.method === 'POST' && p === '/api/notifications/read-all') {
+    const now=Date.now(); d.notifications.forEach(n=>{if(n.userId===u.id&&!n.readAt)n.readAt=now;}); save(d); return send(res,200,{ok:true});
+  }
+  if (req.method === 'POST' && p.startsWith('/api/notifications/')) {
+    const nid=p.split('/').pop(); const n=d.notifications.find(x=>x.id===nid&&x.userId===u.id); if(!n)return send(res,404,{error:'Notification not found.'}); n.readAt=Date.now(); save(d); return send(res,200,{ok:true});
+  }
+
+  if (req.method === 'GET' && p.startsWith('/api/posts/')) {
+    const post = d.posts.find(x => x.id === p.split('/').pop()&&!x.deletedAt);
+    if (!post || (post.archivedAt && post.userId !== u.id) || !visibilityAllowed(d, post.visibility || 'private', post.userId, u)) return send(res,404,{error:'Post not found.'});
+    return send(res,200,{post:publicPost(post,d),comments:d.comments.filter(c=>c.targetType==='post'&&c.targetId===post.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
+  }
+  if (req.method === 'PUT' && p.startsWith('/api/posts/')) {
+    const post = d.posts.find(x => x.id === p.split('/').pop() && x.userId === u.id && !x.deletedAt);
+    if (!post) return send(res,404,{error:'Post not found.'});
+    const x = await body(req);
+    if (x.content !== undefined) post.content = String(x.content);
+    if (x.visibility !== undefined) post.visibility = ['public','followers','friends','private'].includes(x.visibility) ? x.visibility : 'private';
+    if (post.visibility === 'public') delete post.archivedAt; else delete post.archivedAt;
+    post.updatedAt = Date.now(); save(d); return send(res,200,{post:publicPost(post,d)});
+  }
+  if (req.method === 'POST' && p === '/api/posts') {
+    const x = await body(req);
+    const visibility = ['public','followers','friends','private'].includes(x.visibility) ? x.visibility : 'private';
+    const post = {id:id(), userId:u.id, content:String(x.content||''), visibility, createdAt:Date.now(), updatedAt:Date.now(), archivedAt:null};
+    d.posts.push(post); save(d); return send(res,201,{post:publicPost(post,d)});
+  }
+
+  if (req.method === 'GET' && p.startsWith('/api/diaries/')) {
+    const diary = d.diaries.find(x=>x.id===p.split('/').pop()&&!x.deletedAt);
+    if (!diary || !visibilityAllowed(d, diary.visibility || 'private', diary.userId, u)) return send(res,404,{error:'Diary not found.'});
+    return send(res,200,{diary:publicDiary(diary,d),comments:d.comments.filter(c=>c.targetType==='diary'&&c.targetId===diary.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
+  }
+  if (req.method === 'POST' && p === '/api/diaries') {
+    const x = await body(req);
+    const a = {id:id(),userId:u.id,title:String(x.title||'Untitled Entry'),date:x.date||new Date().toISOString().slice(0,10),content:String(x.content||''),mood:String(x.mood||''),weather:String(x.weather||''),season:String(x.season||''),imageUrl:String(x.imageUrl||'').slice(0,5000000),visibility:['public','followers','friends','private'].includes(x.visibility)?x.visibility:'private',createdAt:Date.now(),updatedAt:Date.now()};
+    d.diaries.push(a); save(d); return send(res,201,{diary:a});
+  }
+  if (req.method === 'PUT' && p.startsWith('/api/diaries/')) {
+    const a=d.diaries.find(x=>x.id===p.split('/').pop()&&x.userId===u.id&&!x.deletedAt);
+    if(!a)return send(res,404,{error:'Diary not found.'});
+    const x=await body(req);
+    Object.assign(a,{title:x.title!==undefined?String(x.title):a.title,content:x.content!==undefined?String(x.content):a.content,mood:x.mood!==undefined?String(x.mood):a.mood,weather:x.weather!==undefined?String(x.weather):a.weather,season:x.season!==undefined?String(x.season):a.season,imageUrl:x.imageUrl!==undefined?String(x.imageUrl).slice(0,5000000):(a.imageUrl||''),visibility:x.visibility!==undefined?(['public','followers','friends','private'].includes(x.visibility)?x.visibility:'private'):a.visibility,date:x.date||a.date,updatedAt:Date.now()});
+    save(d);return send(res,200,{diary:a});
+  }
+
+
+  if (req.method === 'GET' && p === '/api/trash') {
+    const map=(type,arr)=>arr.filter(x=>x.userId===u.id&&x.deletedAt).map(x=>({id:x.id,type,title:type==='books'?(x.title||'Untitled Book'):type==='diaries'?(x.title||'Untitled Diary'):(x.content||'Untitled Thought').slice(0,90),deletedAt:x.deletedAt,deletedUntil:x.deletedUntil}));
+    return send(res,200,{items:[...map('books',d.books),...map('diaries',d.diaries),...map('posts',d.posts)].sort((a,b)=>b.deletedAt-a.deletedAt)});
+  }
+  if (req.method === 'POST' && p.startsWith('/api/trash/') && p.endsWith('/restore')) {
+    const parts=p.split('/').filter(Boolean), type=parts[2], itemId=parts[3]; const arr={books:d.books,diaries:d.diaries,posts:d.posts}[type]; if(!arr)return send(res,400,{error:'Unknown trash type.'}); const item=arr.find(x=>x.id===itemId&&x.userId===u.id&&x.deletedAt); if(!item)return send(res,404,{error:'Trash item not found.'}); delete item.deletedAt; delete item.deletedUntil; item.updatedAt=Date.now(); save(d); return send(res,200,{ok:true});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/trash/')) {
+    const parts=p.split('/').filter(Boolean), type=parts[2], itemId=parts[3]; const arr={books:d.books,diaries:d.diaries,posts:d.posts}[type]; if(!arr)return send(res,400,{error:'Unknown trash type.'}); const item=arr.find(x=>x.id===itemId&&x.userId===u.id&&x.deletedAt); if(!item)return send(res,404,{error:'Trash item not found.'});
+    if(type==='books'){const chapterIds=(item.chapters||[]).map(c=>c.id);d.comments=d.comments.filter(c=>!(c.targetType==='chapter'&&chapterIds.includes(c.targetId)));d.highlights=d.highlights.filter(h=>!chapterIds.includes(h.chapterId));d.bookmarks=d.bookmarks.filter(b=>!chapterIds.includes(b.chapterId));d.libraries=d.libraries.filter(l=>l.bookId!==item.id);}
+    else d.comments=d.comments.filter(c=>!(c.targetType===(type==='posts'?'post':'diary')&&c.targetId===item.id));
+    d.notifications=d.notifications.filter(n=>!(n.targetType===(type==='posts'?'post':type==='diaries'?'diary':'book')&&n.targetId===item.id));
+    arr.splice(arr.indexOf(item),1);save(d);return send(res,200,{ok:true});
+  }
+
+
+  if (req.method === 'DELETE' && p.startsWith('/api/posts/')) {
+    const item=d.posts.find(x=>x.id===p.split('/').pop()&&x.userId===u.id&&!x.deletedAt&&!x.deletedAt); if(!item)return send(res,404,{error:'Post not found.'}); markTrash(item); save(d); return send(res,200,{ok:true,deletedUntil:item.deletedUntil});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/diaries/')) {
+    const item=d.diaries.find(x=>x.id===p.split('/').pop()&&x.userId===u.id&&!x.deletedAt&&!x.deletedAt); if(!item)return send(res,404,{error:'Diary not found.'}); markTrash(item); save(d); return send(res,200,{ok:true,deletedUntil:item.deletedUntil});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/books/')) {
+    const item=d.books.find(x=>x.id===p.split('/').pop()&&x.userId===u.id&&!x.deletedAt&&!x.deletedAt); if(!item)return send(res,404,{error:'Book not found.'}); markTrash(item); save(d); return send(res,200,{ok:true,deletedUntil:item.deletedUntil});
+  }
+
+  if (req.method === 'POST' && p === '/api/comments') {
+    const x=await body(req);
+    const targetType=['post','diary','chapter'].includes(x.targetType)?x.targetType:'';
+    const targetId=String(x.targetId||'');
+    const target=targetAllowed(d,targetType,targetId,u);
+    if(!target)return send(res,404,{error:'This content is not available for commenting.'});
+    const c={id:id(),userId:u.id,targetType,targetId,content:String(x.content||'').slice(0,2000),createdAt:Date.now()};
+    if(!c.content.trim())return send(res,400,{error:'Comment cannot be empty.'});
+    d.comments.push(c);save(d);return send(res,201,{comment:{...c,author:publicUser(d,u.id)}});
+  }
+
+  if (req.method === 'GET' && p === '/api/comments') {
+    const type=url.searchParams.get('targetType');const targetId=url.searchParams.get('targetId');
+    if(!targetAllowed(d,type,targetId,u))return send(res,404,{error:'Content not found.'});
+    return send(res,200,{comments:d.comments.filter(c=>c.targetType===type&&c.targetId===targetId).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
+  }
+
+  if (req.method === 'GET' && p.startsWith('/api/books/') && p.endsWith('/stats')) {
+    const bookId=p.split('/')[3]; const b=d.books.find(x=>x.id===bookId&&!x.deletedAt);
+    if(!b || (b.userId!==u.id && (b.visibility!=='public' || !accountVisible(d,b.userId,u)))) return send(res,404,{error:'Book not found.'});
+    return send(res,200,{stats:bookStats(d,b,u.id),chapters:b.chapters.map(c=>({id:c.id,title:c.title,readCount:chapterReadCount(d,c.id)}))});
+  }
+
+  if (req.method === 'GET' && p.startsWith('/api/books/')) {
+    const parts=p.split('/').filter(Boolean); const bookId=parts[2]; const chapterId=parts[4];
+    const b=d.books.find(x=>x.id===bookId&&!x.deletedAt);
+    if(!b || (b.userId!==u.id && !accountVisible(d,b.userId,u) && b.visibility!=='public') || (b.userId!==u.id && b.visibility!=='public'))return send(res,404,{error:'Book not found.'});
+    if(chapterId){
+      const c=b.chapters.find(x=>x.id===chapterId);if(!c)return send(res,404,{error:'Chapter not found.'});
+      const pageNumber=b.chapters.findIndex(x=>x.id===chapterId)+1;
+      const rp=d.readingProgress.find(x=>x.userId===u.id&&x.bookId===bookId);
+      if(rp){rp.chapterId=chapterId;rp.pageNumber=pageNumber;rp.updatedAt=Date.now();} else d.readingProgress.push({id:id(),userId:u.id,bookId,chapterId,pageNumber,updatedAt:Date.now(),createdAt:Date.now()});
+      if(!d.bookReads.some(x=>x.userId===u.id&&x.bookId===bookId)) d.bookReads.push({id:id(),userId:u.id,bookId,createdAt:Date.now()});
+      if(!d.chapterReads.some(x=>x.userId===u.id&&x.bookId===bookId&&x.chapterId===chapterId)) d.chapterReads.push({id:id(),userId:u.id,bookId,chapterId,createdAt:Date.now()});
+      save(d);
+      return send(res,200,{book:publicBook(b,d,u.id),chapter:publicChapter(c),pageNumber,comments:d.comments.filter(x=>x.targetType==='chapter'&&x.targetId===c.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)})),highlights:d.highlights.filter(x=>x.userId===u.id&&x.chapterId===c.id),bookmark:d.bookmarks.find(x=>x.userId===u.id&&x.chapterId===c.id)||null});
+    }
+    if(!d.bookReads.some(x=>x.userId===u.id&&x.bookId===bookId)) { d.bookReads.push({id:id(),userId:u.id,bookId,createdAt:Date.now()}); save(d); }
+    return send(res,200,{book:publicBook(b,d,u.id)});
+  }
+  if (req.method === 'POST' && p === '/api/books') {
+    const x=await body(req);
+    const chapters=Array.isArray(x.chapters)&&x.chapters.length?x.chapters.map(c=>({id:c.id||id(),title:String(c.title||''),content:String(c.content||''),contentHtml:sanitizeStoryHtml(c.contentHtml||'')})):[{id:id(),title:'',content:'',contentHtml:''}];
+    const b={id:id(),userId:u.id,title:String(x.title||'Untitled Book').slice(0,120),description:String(x.description||''),cover:String(x.cover||'').slice(0,5000000),genre:GENRES.includes(String(x.genre||''))?String(x.genre):'',tags:cleanTags(x.tags),visibility:x.visibility==='public'?'public':'private',fontFamily:storyFont(x.fontFamily),chapters,readingCount:0,createdAt:Date.now(),updatedAt:Date.now()};
+    d.books.push(b);save(d);return send(res,201,{book:b});
+  }
+  if (req.method === 'PUT' && p.startsWith('/api/books/')) {
+    const b=d.books.find(x=>x.id===p.split('/').pop()&&x.userId===u.id&&!x.deletedAt);if(!b)return send(res,404,{error:'Book not found.'});
+    const x=await body(req);
+    const chapters=Array.isArray(x.chapters)?x.chapters.map(c=>({id:c.id||id(),title:String(c.title||''),content:String(c.content||''),contentHtml:sanitizeStoryHtml(c.contentHtml||'')})):b.chapters;
+    Object.assign(b,{title:x.title!==undefined?String(x.title):b.title,description:x.description!==undefined?String(x.description):b.description,cover:x.cover!==undefined?String(x.cover).slice(0,5000000):b.cover,genre:x.genre!==undefined?(GENRES.includes(String(x.genre))?String(x.genre):''):b.genre,tags:x.tags!==undefined?cleanTags(x.tags):Array.isArray(b.tags)?b.tags:[],visibility:x.visibility==='public'?'public':x.visibility==='private'?'private':b.visibility,fontFamily:x.fontFamily!==undefined?storyFont(x.fontFamily):storyFont(b.fontFamily),chapters,updatedAt:Date.now()});
+    save(d);return send(res,200,{book:b});
+  }
+
+
+  if (req.method === 'GET' && p === '/api/library') {
+    const entries=d.libraries.filter(x=>x.userId===u.id).map(x=>{const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b?{...publicBook(b,d),addedAt:x.createdAt}:null}).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt);
+    return send(res,200,{books:entries});
+  }
+  if (req.method === 'POST' && p.startsWith('/api/library/')) {
+    const bookId=p.split('/').pop(); const b=d.books.find(x=>x.id===bookId&&!x.deletedAt);
+    if(!b || b.visibility!=='public' || !accountVisible(d,b.userId,u)) return send(res,404,{error:'Book not found.'});
+    if(b.userId===u.id) return send(res,400,{error:'You already own this book.'});
+    if(!d.libraries.some(x=>x.userId===u.id&&x.bookId===bookId)) {
+      d.libraries.push({id:id(),userId:u.id,bookId,createdAt:Date.now()});
+      notify(d,b.userId,'library',u.id,`${u.name || '@'+u.username} added your book “${b.title}” to their library.`,'book',bookId);
+      save(d);
+    }
+    return send(res,200,{ok:true,added:true});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/library/')) {
+    const bookId=p.split('/').pop(); d.libraries=d.libraries.filter(x=>!(x.userId===u.id&&x.bookId===bookId)); save(d); return send(res,200,{ok:true});
+  }
+
+
+  if (req.method === 'POST' && p.startsWith('/api/favorites/')) {
+    const bookId=p.split('/').pop(); const b=d.books.find(x=>x.id===bookId&&!x.deletedAt);
+    if(!b || b.visibility!=='public' || !accountVisible(d,b.userId,u)) return send(res,404,{error:'Book not found.'});
+    if(!d.favorites.some(x=>x.userId===u.id&&x.bookId===bookId)){ d.favorites.push({id:id(),userId:u.id,bookId,createdAt:Date.now()}); save(d); }
+    return send(res,200,{ok:true,favorited:true,stats:bookStats(d,b,u.id)});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/favorites/')) {
+    const bookId=p.split('/').pop(); d.favorites=d.favorites.filter(x=>!(x.userId===u.id&&x.bookId===bookId)); save(d); const b=d.books.find(x=>x.id===bookId&&!x.deletedAt); return send(res,200,{ok:true,favorited:false,stats:b?bookStats(d,b,u.id):{reads:0,libraryAdds:0,favorites:0,favorited:false}});
+  }
+
+  if (req.method === 'POST' && p === '/api/highlights') {
+    const x=await body(req);
+    const target=targetAllowed(d,'chapter',x.chapterId,u);if(!target)return send(res,404,{error:'Chapter not found.'});
+    const rawText=String(x.text||'').slice(0,1000); const chapterText=String(target.content||''); const start=x.start===undefined?chapterText.indexOf(rawText):Number(x.start); const end=x.end===undefined?(start>=0?start+rawText.length:null):Number(x.end); if(!rawText.trim() || start===null || start<0 || end<=start || end>chapterText.length) return send(res,400,{error:'Please select text from the chapter to highlight.'}); const h={id:id(),userId:u.id,chapterId:String(x.chapterId),text:rawText,note:String(x.note||'').slice(0,2000),start,end,createdAt:Date.now()};
+    d.highlights.push(h);save(d);return send(res,201,{highlight:h});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/highlights/')) {
+    const h=d.highlights.find(x=>x.id===p.split('/').pop()&&x.userId===u.id&&!x.deletedAt);if(!h)return send(res,404,{error:'Highlight not found.'});
+    d.highlights=d.highlights.filter(x=>x.id!==h.id);save(d);return send(res,200,{ok:true});
+  }
+  if (req.method === 'POST' && p === '/api/bookmarks') {
+    const x=await body(req);const target=targetAllowed(d,'chapter',x.chapterId,u);if(!target)return send(res,404,{error:'Chapter not found.'});
+    d.bookmarks=d.bookmarks.filter(b=>!(b.userId===u.id&&b.chapterId===x.chapterId));
+    const b={id:id(),userId:u.id,chapterId:String(x.chapterId),position:x.position===undefined?0:Number(x.position),createdAt:Date.now()};
+    d.bookmarks.push(b);save(d);return send(res,201,{bookmark:b});
+  }
+  if (req.method === 'DELETE' && p.startsWith('/api/bookmarks/')) {
+    const bid=p.split('/').pop();const b=d.bookmarks.find(x=>x.id===bid&&x.userId===u.id);if(!b)return send(res,404,{error:'Bookmark not found.'});
+    d.bookmarks=d.bookmarks.filter(x=>x.id!==bid);save(d);return send(res,200,{ok:true});
+  }
+
+  return send(res,404,{error:'API route not found.'});
+}
+
+async function startServer() {
+  await initRemoteDatabase();
+  setInterval(()=>{try{cleanupTrash(db())}catch(e){console.error('Trash cleanup failed:',e.message)}}, 60*60*1000);
+
+  const server=http.createServer(async(req,res)=>{
+    try {
+      if(req.url.startsWith('/api/')) return await api(req,res);
+      const pathname=decodeURIComponent(new URL(req.url,`http://${req.headers.host}`).pathname);
+      const file=pathname==='/'?path.join(PUBLIC,'index.html'):path.join(PUBLIC,pathname);
+      if(!file.startsWith(PUBLIC))return send(res,403,{error:'Forbidden'});
+      if(!fs.existsSync(file)||fs.statSync(file).isDirectory())return send(res,404,{error:'Not found'});
+      const ext=path.extname(file);const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'};
+      res.writeHead(200,{'Content-Type':types[ext]||'application/octet-stream'});fs.createReadStream(file).pipe(res);
+    }catch(e){console.error(e);send(res,500,{error:'Server error.'});}
+  });
+  try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); }
+  setInterval(()=>{ try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); } }, 60 * 1000);
+  server.listen(PORT,()=>console.log(`Lumora running at http://localhost:${PORT}`));
+}
+startServer().catch(e=>{ console.error('Lumora startup failed:', e); process.exit(1); });
+process.on('SIGTERM', async()=>{ try{await remoteSaveQueue; await closeRemoteDatabase();}finally{process.exit(0);} });
+process.on('SIGINT', async()=>{ try{await remoteSaveQueue; await closeRemoteDatabase();}finally{process.exit(0);} });
