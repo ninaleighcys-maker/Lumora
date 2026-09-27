@@ -605,7 +605,7 @@ async function api(req, res) {
         .map(x => [x.id, x])
     ).values()]
       .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0) || String(b.id).localeCompare(String(a.id)))
-      .map(x=>publicPost(x,d));
+      .map(x=>publicPost(x,d,u.id));
     return send(res, 200, { posts });
   }
   if (req.method === 'GET' && p === '/api/discover/books') {
@@ -631,7 +631,7 @@ async function api(req, res) {
         .map(x => [x.id, x])
     ).values()]
       .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0) || String(b.id).localeCompare(String(a.id)))
-      .map(x=>publicDiary(x,d));
+      .map(x=>publicDiary(x,d,u.id));
     return send(res, 200, { diaries });
   }
 
@@ -640,8 +640,8 @@ async function api(req, res) {
     if(!q) return send(res,200,{books:[],people:[],diaries:[],posts:[]});
     const people=d.users.filter(x=>accountVisible(d,x.id,u)&& (searchable(x.username).includes(q)||searchable(x.name).includes(q))).map(x=>({id:x.id,username:x.username,name:x.name,bio:x.bio,avatarUrl:x.avatarUrl||''})).slice(0,20);
     const books=d.books.filter(b=>b.visibility==='public' && !b.deletedAt && accountVisible(d,b.userId,u)).filter(b=>[b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(b=>publicBook(b,d));
-    const diaries=d.diaries.filter(x=>!x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.title,x.content,x.mood,x.weather,x.season,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicDiary(x,d));
-    const posts=d.posts.filter(x=>!x.archivedAt && !x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.content,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicPost(x,d));
+    const diaries=d.diaries.filter(x=>!x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.title,x.content,x.mood,x.weather,x.season,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicDiary(x,d,u.id));
+    const posts=d.posts.filter(x=>!x.archivedAt && !x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.content,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicPost(x,d,u.id));
     return send(res,200,{books,people,diaries,posts});
   }
   if (req.method === 'GET' && p === '/api/profile/check-username') {
@@ -761,7 +761,7 @@ async function api(req, res) {
 
 
   if (req.method === 'GET' && p === '/api/notifications') {
-    const items=d.notifications.filter(n=>n.userId===u.id).sort((a,b)=>b.createdAt-a.createdAt).slice(0,100).map(n=>({...n,actor:publicUser(d,n.actorId)}));
+    const items=d.notifications.filter(n=>n.userId===u.id).sort((a,b)=>b.createdAt-a.createdAt).slice(0,100).map(n=>{const item={...n,actor:publicUser(d,n.actorId)};if(n.targetType==='chapter'){for(const b of d.books){if((b.chapters||[]).some(c=>c.id===n.targetId)){item.bookId=b.id;break;}}}return item;});
     return send(res,200,{notifications:items,unread:items.filter(n=>!n.readAt).length});
   }
   if (req.method === 'POST' && p === '/api/notifications/read-all') {
