@@ -283,8 +283,8 @@ function searchable(value) { return String(value || '').toLowerCase(); }
 
 
 async function sendVerificationEmail(u, token) {
-  const base = process.env.APP_URL || `http://localhost:${PORT}`;
-  const verifyUrl = `${base}/api/verify-email?token=${encodeURIComponent(token)}`;
+  const base = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+  const verifyUrl = `${base}/verify-email?token=${encodeURIComponent(token)}`;
   const smtpHost = process.env.SMTP_HOST;
   if (!smtpHost) {
     console.log(`\n[Lumora email verification] ${u.email}: ${verifyUrl}\n`);
@@ -340,17 +340,18 @@ async function api(req, res) {
 
   if (req.method === 'GET' && p === '/api/me') return send(res, 200, { user: safeUser(userFrom(req)) });
 
-  if (req.method === 'GET' && p === '/api/verify-email') {
+  if (req.method === 'GET' && (p === '/verify-email' || p === '/api/verify-email')) {
     const token = url.searchParams.get('token');
     const d = db();
     const v = d.emailVerifications.find(x => x.token === token && x.expiresAt > Date.now());
-    if (!v) return send(res, 400, { error: 'This verification link is invalid or expired.' });
+    const page = (title, message, ok = false) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} • Lumora</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf7fb;color:#3d3140;font-family:Georgia,'Times New Roman',serif}.box{width:min(560px,calc(100% - 40px));box-sizing:border-box;padding:38px;border:1px solid #eadfea;border-radius:24px;background:white;box-shadow:0 16px 50px rgba(80,55,85,.10);text-align:center}h1{margin:0 0 14px;font-size:34px}.icon{font-size:42px;margin-bottom:12px}p{line-height:1.7;color:#6e6270}.btn{display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#9b4f79;color:#fff;text-decoration:none}.ok{color:#7d4163}</style></head><body><main class="box"><div class="icon">${ok?'✓':'✉'}</div><h1>${title}</h1><p>${message}</p><a class="btn" href="/">Open Lumora</a></main></body></html>`;
+    if (!v) return send(res, 400, page('Verification link expired', 'This verification link is invalid or has expired. Please return to Lumora and request a new verification email.'));
     const u = d.users.find(x => x.id === v.userId);
-    if (!u) return send(res, 404, { error: 'Account not found.' });
+    if (!u) return send(res, 404, page('Account not found', 'We could not find the Lumora account connected to this verification link.'));
     u.emailVerified = true;
     d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
     save(d);
-    return send(res, 200, { ok: true, message: 'Email verified. You can now log in.' });
+    return send(res, 200, page('Email verified ✓', 'Your Lumora email has been verified successfully. You can now open Lumora and log in.', true));
   }
 
   if (req.method === 'POST' && p === '/api/signup') {
