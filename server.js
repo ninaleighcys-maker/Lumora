@@ -30,7 +30,7 @@ let remoteSaveQueue = Promise.resolve();
 
 const EMPTY_DB = {
   users: [], sessions: [], emailVerifications: [], passwordResets: [], books: [], diaries: [],
-  posts: [], comments: [], highlights: [], bookmarks: [], follows: [], followRequests: [], friendRequests: [], friendships: [], messages: [], messageRequests: [], notifications: [], libraries: [], readingProgress: [], favorites: [], bookReads: [], chapterReads: []
+  posts: [], comments: [], likes: [], highlights: [], bookmarks: [], follows: [], followRequests: [], friendRequests: [], friendships: [], messages: [], messageRequests: [], notifications: [], libraries: [], readingProgress: [], favorites: [], bookReads: [], chapterReads: []
 };
 if (!fs.existsSync(DB_FILE)) {
   // One-time migration from the old project-local database. This keeps existing
@@ -90,7 +90,10 @@ async function closeRemoteDatabase() {
 const TRASH_DAYS = 30;
 function notify(d, userId, type, actorId, message, targetType='', targetId='') {
   if (!userId || !actorId || userId === actorId) return;
-  d.notifications.push({ id:id(), userId, type, actorId, message, targetType, targetId, createdAt:Date.now(), readAt:null });
+  const now=Date.now();
+  const duplicate=d.notifications.some(n=>n.userId===userId&&n.type===type&&n.actorId===actorId&&n.targetType===targetType&&n.targetId===targetId&&!n.readAt&&now-Number(n.createdAt||0)<5*60*1000);
+  if(duplicate)return;
+  d.notifications.push({id:id(),userId,type,actorId,message,targetType,targetId,createdAt:now,readAt:null});
 }
 function activeOnly(arr) { return arr.filter(x => !x.deletedAt); }
 function cleanupTrash(d) {
@@ -268,12 +271,9 @@ function publicBook(b, d, viewerId) {
     chapters: b.chapters.map(c => ({ id: c.id, title: c.title, readCount: chapterReadCount(d, c.id) }))
   };
 }
-function publicPost(p, d) {
-  return { ...p, author: publicUser(d, p.userId), commentCount: d.comments.filter(c => c.targetType === 'post' && c.targetId === p.id).length };
-}
-function publicDiary(x, d) {
-  return { ...x, author: publicUser(d, x.userId), commentCount: d.comments.filter(c => c.targetType === 'diary' && c.targetId === x.id).length };
-}
+function publicPost(p,d,viewerId=null){const likes=d.likes.filter(x=>x.targetType==='post'&&x.targetId===p.id);return {...p,author:publicUser(d,p.userId),commentCount:d.comments.filter(c=>c.targetType==='post'&&c.targetId===p.id).length,likesCount:likes.length,liked:!!viewerId&&likes.some(x=>x.userId===viewerId),mentions:publicMentions(d,p.mentionUserIds)};}
+function publicDiary(x,d,viewerId=null){const likes=d.likes.filter(l=>l.targetType==='diary'&&l.targetId===x.id);return {...x,author:publicUser(d,x.userId),commentCount:d.comments.filter(c=>c.targetType==='diary'&&c.targetId===x.id).length,likesCount:likes.length,liked:!!viewerId&&likes.some(l=>l.userId===viewerId),mentions:publicMentions(d,x.mentionUserIds)};}
+function publicComment(c,d){return {...c,parentId:c.parentId||null,author:publicUser(d,c.userId),mentions:publicMentions(d,c.mentionUserIds)};}
 function publicChapter(c) { return { id: c.id, title: c.title, content: c.content || '', contentHtml: sanitizeStoryHtml(c.contentHtml || '') }; }
 const GENRES = ['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
 function cleanTags(value) {
@@ -281,7 +281,9 @@ function cleanTags(value) {
   return [...new Set(value.map(x => String(x).trim().replace(/^#/, '').replace(/[^\p{L}\p{N}_-]/gu, '').slice(0,40)).filter(Boolean))].slice(0,20);
 }
 function searchable(value) { return String(value || '').toLowerCase(); }
-
+function extractMentionUserIds(d,text){const ids=new Set();for(const m of String(text||'').matchAll(/@([a-z0-9_]{3,24})/ig)){const username=String(m[1]||'').toLowerCase();const found=d.users.find(x=>x.username===username);if(found)ids.add(found.id);}return [...ids];}
+function publicMentions(d,ids){return [...new Set(Array.isArray(ids)?ids:[])].map(x=>d.users.find(u=>u.id===x)).filter(Boolean).map(u=>publicUser(d,u.id));}
+function notifyMentions(d,actor,ids,targetType,targetId,label){for(const id of ids||[])notify(d,id,'mention',actor.id,(actor.name||'@'+actor.username)+' '+(label||'mentioned you')+'.',targetType,targetId);}
 
 async function sendVerificationEmail(u, token, code) {
   // Email verification is intentionally code-only. The verification-link path
@@ -586,7 +588,7 @@ async function api(req, res) {
       user: safeUser(u),
       books: d.books.filter(b => b.userId === u.id && !b.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt).map(b => ({...b, tags: Array.isArray(b.tags)?b.tags:[], stats: bookStats(d,b,u.id), fontFamily: storyFont(b.fontFamily)})),
       diaries: d.diaries.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt),
-      posts: d.posts.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.createdAt-a.createdAt).map(p => publicPost(p,d)),
+      posts: d.posts.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.createdAt-a.createdAt).map(p => publicPost(p,d,u.id)),
       archivedPosts: d.posts.filter(x => x.userId === u.id && x.archivedAt && !x.deletedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d)),
       libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
       continueReading: d.readingProgress.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d), chapterId:x.chapterId, pageNumber:x.pageNumber, progressUpdatedAt:x.updatedAt} : null; }).filter(Boolean).sort((a,b)=>(b.progressUpdatedAt||0)-(a.progressUpdatedAt||0)),
@@ -610,13 +612,15 @@ async function api(req, res) {
     const q=searchable(url.searchParams.get('q'));
     const genre=String(url.searchParams.get('genre')||'');
     const tag=searchable(url.searchParams.get('tag'));
-    const allowed = b => b.visibility === 'public' && !b.deletedAt && accountVisible(d,b.userId,u);
-    const matches = b => (!genre || b.genre===genre) && (!tag || (b.tags||[]).some(t=>searchable(t)===tag)) && (!q || [b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q)));
-    const base = d.books.filter(b => allowed(b) && matches(b));
-    const score = b => { const st=bookStats(d,b,u.id); const age=Math.max(0,Date.now()-(b.updatedAt||b.createdAt||Date.now())); const freshness=Math.max(0,30-Math.floor(age/86400000)); const queryBoost=q&&[b.title,b.description,b.genre,(b.tags||[]).join(' ')].some(v=>searchable(v).includes(q))?80:0; return st.reads*4+st.libraryAdds*3+st.favorites*3+freshness+queryBoost; };
-    const recommendations = [...base].sort((a,b)=>score(b)-score(a) || b.updatedAt-a.updatedAt).slice(0,12).map(b=>publicBook(b,d,u.id));
-    const books = [...base].sort((a,b)=>b.updatedAt-a.updatedAt).map(b=>publicBook(b,d,u.id));
-    return send(res, 200, { books, recommendations, genres: GENRES });
+    const offset=Math.max(0,Number(url.searchParams.get('offset')||0));
+    const limit=Math.min(20,Math.max(5,Number(url.searchParams.get('limit')||15)));
+    const allowed=b=>b.visibility==='public'&&!b.deletedAt&&accountVisible(d,b.userId,u);
+    const matches=b=>(!genre||b.genre===genre)&&(!tag||(b.tags||[]).some(t=>searchable(t)===tag))&&(!q||[b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q)));
+    const base=d.books.filter(b=>allowed(b)&&matches(b)).sort((a,b)=>b.updatedAt-a.updatedAt);
+    const score=b=>{const st=bookStats(d,b,u.id);const age=Math.max(0,Date.now()-(b.updatedAt||b.createdAt||Date.now()));const freshness=Math.max(0,30-Math.floor(age/86400000));const queryBoost=q&&[b.title,b.description,b.genre,(b.tags||[]).join(' ')].some(v=>searchable(v).includes(q))?80:0;return st.reads*4+st.libraryAdds*3+st.favorites*3+freshness+queryBoost;};
+    const recommendations=offset===0?[...base].sort((a,b)=>score(b)-score(a)||b.updatedAt-a.updatedAt).slice(0,12).map(b=>publicBook(b,d,u.id)):[];
+    const books=base.slice(offset,offset+limit).map(b=>publicBook(b,d,u.id));
+    return send(res,200,{books,recommendations,genres:GENRES,total:base.length,offset,limit,hasMore:offset+books.length<base.length,nextOffset:offset+books.length});
   }
   if (req.method === 'GET' && p === '/api/chika') {
     // Chika is intentionally diary-only. Keep the query server-side and apply
@@ -640,11 +644,29 @@ async function api(req, res) {
     const posts=d.posts.filter(x=>!x.archivedAt && !x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.content,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicPost(x,d));
     return send(res,200,{books,people,diaries,posts});
   }
+  if (req.method === 'GET' && p === '/api/profile/check-username') {
+    const u=requireUser(req,res); if(!u)return;
+    const username=String(url.searchParams.get('username')||'').trim().toLowerCase();
+    if(!/^[a-z0-9_]{3,24}$/.test(username))return send(res,200,{available:false,reason:'Username must be 3-24 characters using letters, numbers, or underscores.'});
+    const taken=d.users.some(item=>item.username===username&&item.id!==u.id);
+    return send(res,200,{available:!taken,reason:taken?'Username already taken.':'Username available.'});
+  }
+
   if (req.method === 'PUT' && p === '/api/profile') {
     const u = requireUser(req, res); if (!u) return;
     const x = await body(req); const d = db();
     const current = d.users.find(user => user.id === u.id);
     if (!current) return send(res,404,{error:'Account not found.'});
+    let username=current.username;
+    if(x.username!==undefined){
+      username=String(x.username||'').trim().toLowerCase();
+      if(username!==current.username){
+        if(!/^[a-z0-9_]{3,24}$/.test(username))return send(res,400,{error:'Username must be 3-24 characters using letters, numbers, or underscores.'});
+        if(d.users.some(item=>item.username===username&&item.id!==current.id))return send(res,409,{error:'Username already taken.'});
+        const currentPassword=String(x.currentPassword||'');
+        if(!currentPassword||!verifyPassword(currentPassword,current.passwordHash))return send(res,401,{error:'Current password is required to change your username.'});
+      }
+    }
     const name = String(x.name || '').trim().slice(0,80);
     const bio = String(x.bio || '').trim().slice(0,500);
     const avatarUrl = String(x.avatarUrl || '').trim().slice(0,5000000);
@@ -654,7 +676,7 @@ async function api(req, res) {
     const messagePermission = ['everyone','followers','friends','none'].includes(x.messagePermission) ? x.messagePermission : (current.messagePermission || 'everyone');
     const theme = String(x.theme || current.theme || 'Rose').trim().slice(0,60);
     if (!name) return send(res,400,{error:'Display name is required.'});
-    current.name=name; current.bio=bio; current.avatarUrl=avatarUrl; current.coverUrl=coverUrl; current.favoriteQuote=favoriteQuote; current.accountPrivacy=accountPrivacy; current.messagePermission=messagePermission; current.theme=theme;
+    current.username=username; current.name=name; current.bio=bio; current.avatarUrl=avatarUrl; current.coverUrl=coverUrl; current.favoriteQuote=favoriteQuote; current.accountPrivacy=accountPrivacy; current.messagePermission=messagePermission; current.theme=theme;
     save(d); return send(res,200,{user:safeUser(current)});
   }
 
@@ -726,9 +748,15 @@ async function api(req, res) {
   }
   if (req.method === 'POST' && p.startsWith('/api/follow-requests/') && p.endsWith('/accept')) { const rid=p.split('/')[3]; const r=d.followRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Follow request not found.'}); r.status='accepted'; if(!isFollowing(d,r.fromId,u.id)){d.follows.push({id:id(),followerId:r.fromId,followingId:u.id,createdAt:Date.now()}); notify(d,r.fromId,'follow',u.id,`${u.name || '@'+u.username} accepted your follow request.`,'user',u.id);} syncMutualFriendship(d,r.fromId,u.id); save(d); return send(res,200,{ok:true,friends:areFriends(d,r.fromId,u.id)}); }
   if (req.method === 'POST' && p.startsWith('/api/follow-requests/') && p.endsWith('/decline')) { const rid=p.split('/')[3]; const r=d.followRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Follow request not found.'}); r.status='declined'; save(d); return send(res,200,{ok:true}); }
-  if (req.method === 'GET' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const existingConversation=d.messages.some(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)); const allowed=messagingAllowed(d,u,other)||existingConversation; if(!allowed)return send(res,403,{error:'Messaging is not open between you yet. Send a message request instead.'}); return send(res,200,{messages:d.messages.filter(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)).sort((a,b)=>a.createdAt-b.createdAt).map(x=>({...x,from:publicUser(d,x.fromId)})),user:publicUser(d,otherId)}); }
-  if (req.method === 'POST' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const x=await body(req); const content=String(x.content||'').trim().slice(0,3000); if(!content)return send(res,400,{error:'Message cannot be empty.'}); const existingConversation=d.messages.some(m=>(m.fromId===u.id&&m.toId===otherId)||(m.fromId===otherId&&m.toId===u.id)); if(messagingAllowed(d,u,other)||existingConversation){const m={id:id(),fromId:u.id,toId:otherId,content,createdAt:Date.now()};d.messages.push(m);notify(d,otherId,'message',u.id,`${u.name || '@'+u.username} sent you a message.`,'user',u.id);save(d);return send(res,201,{message:m,request:false});} if((other.messagePermission||'everyone')==='none')return send(res,403,{error:'This user is not accepting message requests from strangers.'}); const mr={id:id(),fromId:u.id,toId:otherId,message:content,status:'pending',createdAt:Date.now()}; d.messageRequests.push(mr);notify(d,otherId,'message',u.id,`${u.name || '@'+u.username} sent you a message request.`,'user',u.id);save(d);return send(res,201,{request:true,messageRequest:{...mr,from:publicUser(d,u.id)}}); }
-  if (req.method === 'POST' && p.startsWith('/api/message-requests/') && p.endsWith('/accept')) { const rid=p.split('/')[3]; const r=d.messageRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Message request not found.'}); r.status='accepted'; d.messages.push({id:id(),fromId:r.fromId,toId:u.id,content:r.message,createdAt:r.createdAt}); save(d); return send(res,200,{ok:true}); }
+  if (req.method === 'GET' && p === '/api/messages') {
+    const byUser=new Map();
+    for(const m of d.messages){const otherId=m.fromId===u.id?m.toId:m.toId===u.id?m.fromId:null;if(!otherId)continue;const prev=byUser.get(otherId);if(!prev||Number(m.createdAt||0)>Number(prev.createdAt||0))byUser.set(otherId,m);}
+    const conversations=[...byUser.entries()].sort((a,b)=>Number(b[1].createdAt||0)-Number(a[1].createdAt||0)).map(([otherId,lastMessage])=>({user:publicUser(d,otherId),lastMessage,unreadCount:d.messages.filter(m=>m.fromId===otherId&&m.toId===u.id&&!m.readAt).length}));
+    return send(res,200,{conversations});
+  }
+  if (req.method === 'GET' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const existingConversation=d.messages.some(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)); const allowed=messagingAllowed(d,u,other)||existingConversation; if(!allowed)return send(res,403,{error:'Messaging is not open between you yet. Send a message request instead.'}); const messages=d.messages.filter(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)).sort((a,b)=>a.createdAt-b.createdAt); let changed=false; for(const m of messages){if(m.toId===u.id&&!m.readAt){m.readAt=Date.now();changed=true;}} if(changed)save(d); return send(res,200,{messages:messages.map(x=>({...x,from:publicUser(d,x.fromId)})),user:publicUser(d,otherId)}); }
+  if (req.method === 'POST' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const x=await body(req); const content=String(x.content||'').trim().slice(0,3000); const clientMessageId=String(x.clientMessageId||'').trim().slice(0,120); if(!content)return send(res,400,{error:'Message cannot be empty.'}); if(clientMessageId){const duplicate=d.messages.find(m=>m.fromId===u.id&&m.toId===otherId&&m.clientMessageId===clientMessageId);if(duplicate)return send(res,200,{message:{...duplicate,from:publicUser(d,u.id)},request:false,duplicate:true});} const existingConversation=d.messages.some(m=>(m.fromId===u.id&&m.toId===otherId)||(m.fromId===otherId&&m.toId===u.id)); if(messagingAllowed(d,u,other)||existingConversation){const m={id:id(),fromId:u.id,toId:otherId,content,clientMessageId:clientMessageId||null,createdAt:Date.now(),readAt:null};d.messages.push(m);notify(d,otherId,'message',u.id,u.name||'@'+u.username+' sent you a message.','user',u.id);save(d);return send(res,201,{message:{...m,from:publicUser(d,u.id)},request:false});} if((other.messagePermission||'everyone')==='none')return send(res,403,{error:'This user is not accepting message requests from strangers.'}); const duplicateRequest=clientMessageId&&d.messageRequests.find(r=>r.fromId===u.id&&r.toId===otherId&&r.clientMessageId===clientMessageId&&r.status==='pending'); if(duplicateRequest)return send(res,200,{request:true,messageRequest:duplicateRequest,duplicate:true}); const mr={id:id(),fromId:u.id,toId:otherId,message:content,clientMessageId:clientMessageId||null,status:'pending',createdAt:Date.now()}; d.messageRequests.push(mr); notify(d,otherId,'message',u.id,u.name||'@'+u.username+' sent you a message request.','user',u.id); save(d); return send(res,201,{request:true,messageRequest:{...mr,from:publicUser(d,u.id)}}); }
+  if (req.method === 'POST' && p.startsWith('/api/message-requests/') && p.endsWith('/accept')) { const rid=p.split('/')[3]; const r=d.messageRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Message request not found.'}); r.status='accepted'; if(!d.messages.some(m=>m.fromId===r.fromId&&m.toId===u.id&&r.clientMessageId&&m.clientMessageId===r.clientMessageId))d.messages.push({id:id(),fromId:r.fromId,toId:u.id,content:r.message,clientMessageId:r.clientMessageId||null,createdAt:r.createdAt,readAt:null}); save(d); return send(res,200,{ok:true}); }
   if (req.method === 'POST' && p.startsWith('/api/message-requests/') && p.endsWith('/decline')) { const rid=p.split('/')[3]; const r=d.messageRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Message request not found.'}); r.status='declined'; save(d); return send(res,200,{ok:true}); }
 
 
@@ -746,13 +774,13 @@ async function api(req, res) {
   if (req.method === 'GET' && p.startsWith('/api/posts/')) {
     const post = d.posts.find(x => x.id === p.split('/').pop()&&!x.deletedAt);
     if (!post || (post.archivedAt && post.userId !== u.id) || !visibilityAllowed(d, post.visibility || 'private', post.userId, u)) return send(res,404,{error:'Post not found.'});
-    return send(res,200,{post:publicPost(post,d),comments:d.comments.filter(c=>c.targetType==='post'&&c.targetId===post.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
+    return send(res,200,{post:publicPost(post,d,u.id),comments:d.comments.filter(c=>c.targetType==='post'&&c.targetId===post.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
   }
   if (req.method === 'PUT' && p.startsWith('/api/posts/')) {
     const post = d.posts.find(x => x.id === p.split('/').pop() && x.userId === u.id && !x.deletedAt);
     if (!post) return send(res,404,{error:'Post not found.'});
     const x = await body(req);
-    if (x.content !== undefined) post.content = String(x.content);
+    if (x.content !== undefined) { post.content = String(x.content).slice(0,10000); post.mentionUserIds = extractMentionUserIds(d,post.content); notifyMentions(d,u,post.mentionUserIds,'post',post.id,'mentioned you in a post'); }
     if (x.visibility !== undefined) post.visibility = ['public','followers','friends','private'].includes(x.visibility) ? x.visibility : 'private';
     if (post.visibility === 'public') delete post.archivedAt; else delete post.archivedAt;
     post.updatedAt = Date.now(); save(d); return send(res,200,{post:publicPost(post,d)});
@@ -760,14 +788,14 @@ async function api(req, res) {
   if (req.method === 'POST' && p === '/api/posts') {
     const x = await body(req);
     const visibility = ['public','followers','friends','private'].includes(x.visibility) ? x.visibility : 'private';
-    const post = {id:id(), userId:u.id, content:String(x.content||''), visibility, createdAt:Date.now(), updatedAt:Date.now(), archivedAt:null};
-    d.posts.push(post); save(d); return send(res,201,{post:publicPost(post,d)});
+    const content=String(x.content||'').slice(0,10000); const post={id:id(),userId:u.id,content,mentionUserIds:extractMentionUserIds(d,content),visibility,createdAt:Date.now(),updatedAt:Date.now(),archivedAt:null};
+    d.posts.push(post); notifyMentions(d,u,post.mentionUserIds,'post',post.id,'mentioned you in a post'); save(d); return send(res,201,{post:publicPost(post,d,u.id)});
   }
 
   if (req.method === 'GET' && p.startsWith('/api/diaries/')) {
     const diary = d.diaries.find(x=>x.id===p.split('/').pop()&&!x.deletedAt);
     if (!diary || !visibilityAllowed(d, diary.visibility || 'private', diary.userId, u)) return send(res,404,{error:'Diary not found.'});
-    return send(res,200,{diary:publicDiary(diary,d),comments:d.comments.filter(c=>c.targetType==='diary'&&c.targetId===diary.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
+    return send(res,200,{diary:publicDiary(diary,d,u.id),comments:d.comments.filter(c=>c.targetType==='diary'&&c.targetId===diary.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
   }
   if (req.method === 'POST' && p === '/api/diaries') {
     const x = await body(req);
@@ -810,20 +838,18 @@ async function api(req, res) {
   }
 
   if (req.method === 'POST' && p === '/api/comments') {
-    const x=await body(req);
-    const targetType=['post','diary','chapter'].includes(x.targetType)?x.targetType:'';
-    const targetId=String(x.targetId||'');
-    const target=targetAllowed(d,targetType,targetId,u);
-    if(!target)return send(res,404,{error:'This content is not available for commenting.'});
-    const c={id:id(),userId:u.id,targetType,targetId,content:String(x.content||'').slice(0,2000),createdAt:Date.now()};
-    if(!c.content.trim())return send(res,400,{error:'Comment cannot be empty.'});
-    d.comments.push(c);save(d);return send(res,201,{comment:{...c,author:publicUser(d,u.id)}});
+    const x=await body(req); const targetType=['post','diary','chapter'].includes(x.targetType)?x.targetType:''; const targetId=String(x.targetId||''); const target=targetAllowed(d,targetType,targetId,u); if(!target)return send(res,404,{error:'This content is not available for commenting.'});
+    const parentId=String(x.parentId||'')||null; if(parentId&&!d.comments.some(c=>c.id===parentId&&c.targetType===targetType&&c.targetId===targetId))return send(res,400,{error:'The comment you are replying to no longer exists.'});
+    const content=String(x.content||'').trim().slice(0,2000); if(!content)return send(res,400,{error:'Comment cannot be empty.'});
+    const c={id:id(),userId:u.id,targetType,targetId,parentId,content,mentionUserIds:extractMentionUserIds(d,content),createdAt:Date.now()}; d.comments.push(c);
+    if(targetType==='post'||targetType==='diary')notify(d,target.userId,parentId?'reply':'comment',u.id,parentId?(u.name||'@'+u.username)+' replied to your comment.':(u.name||'@'+u.username)+' commented on your '+targetType+'.',targetType,targetId);
+    if(parentId){const parent=d.comments.find(item=>item.id===parentId);if(parent)notify(d,parent.userId,'reply',u.id,(u.name||'@'+u.username)+' replied to your comment.',targetType,targetId);}
+    notifyMentions(d,u,c.mentionUserIds,targetType,targetId,'mentioned you in a comment'); save(d); return send(res,201,{comment:publicComment(c,d)});
   }
 
   if (req.method === 'GET' && p === '/api/comments') {
-    const type=url.searchParams.get('targetType');const targetId=url.searchParams.get('targetId');
-    if(!targetAllowed(d,type,targetId,u))return send(res,404,{error:'Content not found.'});
-    return send(res,200,{comments:d.comments.filter(c=>c.targetType===type&&c.targetId===targetId).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)}))});
+    const type=url.searchParams.get('targetType');const targetId=url.searchParams.get('targetId'); if(!targetAllowed(d,type,targetId,u))return send(res,404,{error:'Content not found.'});
+    return send(res,200,{comments:d.comments.filter(c=>c.targetType===type&&c.targetId===targetId).sort((a,b)=>a.createdAt-b.createdAt).map(c=>publicComment(c,d))});
   }
 
   if (req.method === 'GET' && p.startsWith('/api/books/') && p.endsWith('/stats')) {
@@ -883,6 +909,15 @@ async function api(req, res) {
     const bookId=p.split('/').pop(); d.libraries=d.libraries.filter(x=>!(x.userId===u.id&&x.bookId===bookId)); save(d); return send(res,200,{ok:true});
   }
 
+
+  if ((req.method==='POST'||req.method==='DELETE')&&p.startsWith('/api/likes/')) {
+    const parts=p.split('/').filter(Boolean),targetType=parts[2],targetId=parts[3]; if(!['post','diary'].includes(targetType))return send(res,400,{error:'Unsupported like target.'});
+    const arr=targetType==='post'?d.posts:d.diaries; const target=arr.find(x=>x.id===targetId&&!x.deletedAt); if(!target||!visibilityAllowed(d,target.visibility||'private',target.userId,u))return send(res,404,{error:'Content not found.'});
+    const existing=d.likes.find(x=>x.userId===u.id&&x.targetType===targetType&&x.targetId===targetId);
+    if(req.method==='POST'){if(!existing){d.likes.push({id:id(),userId:u.id,targetType,targetId,createdAt:Date.now()});notify(d,target.userId,'like',u.id,(u.name||'@'+u.username)+' liked your '+targetType+'.',targetType,targetId);save(d);}}
+    else if(existing){d.likes=d.likes.filter(x=>x.id!==existing.id);save(d);}
+    return send(res,200,{ok:true,liked:d.likes.some(x=>x.userId===u.id&&x.targetType===targetType&&x.targetId===targetId),likesCount:d.likes.filter(x=>x.targetType===targetType&&x.targetId===targetId).length});
+  }
 
   if (req.method === 'POST' && p.startsWith('/api/favorites/')) {
     const bookId=p.split('/').pop(); const b=d.books.find(x=>x.id===bookId&&!x.deletedAt);
