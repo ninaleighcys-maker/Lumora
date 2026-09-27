@@ -172,7 +172,7 @@ async function requestPasswordReset(){try{const x=await api('/api/forgot-passwor
 
 function signupForm(){document.getElementById('authbox').innerHTML=`<h2>Create your account</h2><div class="field"><label>Name</label><input id="n"></div><div class="field"><label>Email</label><input id="e" type="email" autocomplete="email"></div><div class="field"><label>Username</label><input id="u" autocomplete="username"></div><div class="field"><label>Password (8+ characters)</label><input id="p" type="password" autocomplete="new-password"></div><button onclick="signup()">Sign up</button><p class="small">Already have an account? <a href="#" onclick="loginForm();return false">Log in</a></p>`}
 
-async function login(){try{const x=await api('/api/login',{method:'POST',body:JSON.stringify({identifier:u.value,password:p.value})});me=x.user;applyTheme();if(!me.emailVerified)return verificationPage();await dashboard()}catch(e){alert(e.message)}}
+async function login(){try{const x=await api('/api/login',{method:'POST',body:JSON.stringify({identifier:u.value,password:p.value})});me=x.user;applyTheme();await dashboard()}catch(e){alert(e.message)}}
 
 async function signup(){try{const x=await api('/api/signup',{method:'POST',body:JSON.stringify({name:n.value,email:e.value,username:u.value,password:p.value})});me=x.user;verificationPage(x.previewCode)}catch(e){alert(e.message)}}
 
