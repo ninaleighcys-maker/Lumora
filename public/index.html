@@ -99,7 +99,27 @@
 .comment-compose textarea{font-size:13px}
 .book-description-full{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;font-size:17px;margin:18px 0 24px}
 .book-detail-author{display:block;margin:10px 0 18px;line-height:1.5;clear:both}.post-detail-meta{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:18px 0 6px;line-height:1.45}
-.news-intro{max-width:920px!important;width:100%}.post-detail-meta+.book-detail-author{margin-top:8px}.post-detail-meta+.book-detail-author+.post-body{margin-top:8px}</style></head><body><div id="app"></div><script>
+.news-intro{max-width:920px!important;width:100%}.post-detail-meta+.book-detail-author{margin-top:8px}.post-detail-meta+.book-detail-author+.post-body{margin-top:8px}/* Profile spacing and media interaction polish */
+.profile-cover .profile-head h1{margin-bottom:8px}
+.profile-cover .profile-head .muted{margin-top:5px;margin-bottom:8px}
+.profile-cover .profile-head .profile-bio{margin-top:9px;margin-bottom:7px;line-height:1.5}
+.profile-cover .profile-head .quote{margin-top:8px;margin-bottom:2px}
+.profile-cover .profile-head .profile-clickable{cursor:pointer}
+.profile-cover .profile-head .profile-clickable:hover{filter:brightness(1.05)}
+.profile-cover .profile-cover-clickable{position:absolute;inset:0;display:block;border-radius:28px;cursor:pointer;z-index:1}
+.profile-cover .profile-cover-clickable:hover{filter:brightness(1.04)}
+.profile-cover .profile-head{z-index:2}
+.crop-modal .modalbox{max-width:760px}
+.crop-stage-wrap{background:#101014;border-radius:18px;overflow:hidden;display:flex;align-items:center;justify-content:center;min-height:300px}
+.crop-stage{display:block;max-width:100%;max-height:58vh;touch-action:none;cursor:grab;user-select:none}
+.crop-stage.dragging{cursor:grabbing}
+.crop-controls{display:flex;gap:12px;align-items:center;margin:14px 0}
+.crop-controls input[type=range]{flex:1}
+.crop-hint{font-size:12px;color:var(--muted);line-height:1.5}
+.image-lightbox{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.76);display:flex;align-items:center;justify-content:center;padding:24px;cursor:zoom-out}
+.image-lightbox img{max-width:94vw;max-height:90vh;width:auto;height:auto;object-fit:contain;border-radius:18px;box-shadow:0 20px 70px rgba(0,0,0,.45)}
+@media(max-width:700px){.profile-cover{min-height:270px}.profile-cover .profile-head{gap:12px;padding:16px}.profile-cover .profile-head .profile-bio{margin-top:7px}.crop-stage-wrap{min-height:240px}.crop-controls{flex-wrap:wrap}}
+</style></head><body><div id="app"></div><script>
 const app=document.getElementById('app');let me=null;let state={view:'news',data:null,book:null,chapter:null,chapterData:null,search:null,profile:null,highlightVisible:false,messageData:null,messageNotice:'',notificationCount:0,libraryBooks:[]};
 const GENRES=['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
 const WEATHER=[['☀️','Sunny'],['🌧️','Rainy'],['⛅','Cloudy'],['🌩️','Stormy'],['🌫️','Foggy'],['❄️','Snowy'],['🌙','Clear Night'],['🌬️','Windy']];
@@ -159,8 +179,8 @@ function editProfile(){
   const m=modal('<button class="profile-close" aria-label="Close" onclick="closeProfileModal()">×</button><h2>✦ Edit Your Profile</h2><p class="muted">Make your little corner of Lumora feel like yours.</p>'+
   '<div class="field"><label>Display Name</label><input id="pfName" value="'+attr(u.name||'')+'"></div>'+
   '<div class="field"><label>Username</label><input id="pfUsername" value="'+attr(u.username||'')+'" oninput="checkUsernameAvailability(this.value)"><div id="usernameStatus" class="username-status muted">You can keep your current username.</div></div>'+
-  '<div class="field"><label>Avatar</label><div class="avatar-upload-wrap"><div id="profileAvatarPreview">'+avatarMarkup(u)+'</div><div><input id="pfAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" onchange="previewAvatar(this)"><p class="avatar-upload-note">Crop, zoom and reposition before saving.</p></div></div><div class="row"><button class="secondary" onclick="deleteProfilePhoto(&quot;avatar&quot;)">Delete Avatar</button><button class="secondary" onclick="openImageLightbox(me.avatarUrl)">View Larger</button></div><input id="pfAvatar" value="'+attr(u.avatarUrl||'')+'" placeholder="Or paste an image URL"></div>'+
-  '<div class="field"><label>Cover Image</label><input id="pfCoverFile" type="file" accept="image/png,image/jpeg,image/webp" onchange="previewCover(this)"><div id="profileCoverPreview">'+(u.coverUrl?'<img class="upload-preview cover-view-image" onclick="openImageLightbox(me.coverUrl)" src="'+attr(u.coverUrl)+'" alt="Cover preview">':'')+'</div><div class="row"><button class="secondary" onclick="deleteProfilePhoto(&quot;cover&quot;)">Delete Cover</button><button class="secondary" onclick="openImageLightbox(me.coverUrl)">View Larger</button></div><input id="pfCover" value="'+attr(u.coverUrl||'')+'" placeholder="Or paste a cover image URL"></div>'+
+  '<div class="field"><label>Profile Picture</label><div class="avatar-upload-wrap"><div id="profileAvatarPreview">'+avatarMarkup(u)+'</div><div><input id="pfAvatarFile" type="file" accept="image/png,image/jpeg,image/webp" onchange="previewAvatar(this)"><p class="avatar-upload-note">Choose a photo, then crop, zoom, and reposition it before saving.</p></div></div><div class="row"><button type="button" class="secondary" onclick="deleteProfilePhoto(\'avatar\')">Delete Avatar</button><button type="button" class="secondary" onclick="openImageLightbox(document.getElementById(\'pfAvatar\').value)">View Larger</button></div><input id="pfAvatar" value="'+attr(u.avatarUrl||'')+'" placeholder="Or paste an image URL"></div>'+
+  '<div class="field"><label>Cover Photo</label><input id="pfCoverFile" type="file" accept="image/png,image/jpeg,image/webp" onchange="previewCover(this)"><div id="profileCoverPreview">'+(u.coverUrl?'<img class="upload-preview cover-view-image profile-clickable" style="max-width:100%;width:100%;height:180px;object-fit:cover" onclick="openImageLightbox(this.currentSrc||this.src)" src="'+attr(u.coverUrl)+'" alt="Cover preview">':'')+'</div><p class="avatar-upload-note">Drag to reposition, zoom in/out, and choose exactly what stays in the cover area.</p><div class="row"><button type="button" class="secondary" onclick="deleteProfilePhoto(\'cover\')">Delete Cover</button><button type="button" class="secondary" onclick="openImageLightbox(document.getElementById(\'pfCover\').value)">View Larger</button></div><input id="pfCover" value="'+attr(u.coverUrl||'')+'" placeholder="Or paste a cover image URL"></div>'+
   '<div class="field"><label>Bio</label><textarea id="pfBio" style="min-height:120px">'+esc(u.bio||'')+'</textarea></div>'+
   '<div class="field"><label>Favorite Quote</label><input id="pfQuote" value="'+attr(u.favoriteQuote||'')+'" placeholder="A line that feels like you"></div>'+
   '<div class="field"><label>Account Privacy</label><select id="pfPrivacy"><option value="public" '+(u.accountPrivacy!=='private'?'selected':'')+'>🌎 Public</option><option value="private" '+(u.accountPrivacy==='private'?'selected':'')+'>🔒 Private</option></select></div>'+
@@ -171,13 +191,82 @@ function editProfile(){
 }
 let usernameTimer=null;
 async function checkUsernameAvailability(value){const input=String(value||'').trim().toLowerCase(),status=document.getElementById('usernameStatus');if(!status)return;if(input===String(me.username||'').toLowerCase()){status.textContent='You can keep your current username.';status.className='username-status muted';return}if(!/^[a-z0-9_.-]{3,30}$/.test(input)){status.textContent='Use 3–30 letters, numbers, dots, underscores, or hyphens.';status.className='username-status muted';return}clearTimeout(usernameTimer);status.textContent='Checking availability…';usernameTimer=setTimeout(async()=>{try{const r=await api('/api/profile/check-username?username='+encodeURIComponent(input));status.textContent=r.available?'Username available':'Username already taken';status.className='username-status '+(r.available?'':'muted')}catch(e){status.textContent='Could not check username right now.'}},250)}
-async function deleteProfilePhoto(type){const payload={name:me.name,username:me.username,bio:me.bio||'',avatarUrl:me.avatarUrl||'',coverUrl:me.coverUrl||'',favoriteQuote:me.favoriteQuote||'',accountPrivacy:me.accountPrivacy||'public',messagePermission:me.messagePermission||'everyone',theme:me.theme||'Rose'};if(type==='avatar'){payload.avatarUrl='';document.getElementById('pfAvatar').value=''}else{payload.coverUrl='';document.getElementById('pfCover').value=''}try{const r=await api('/api/profile',{method:'PUT',body:JSON.stringify(payload)});me=r.user;if(type==='avatar')document.getElementById('profileAvatarPreview').innerHTML=avatarMarkup(me);else document.getElementById('profileCoverPreview').innerHTML='';}catch(e){alert(e.message)}}
-function openImageLightbox(src){if(!src)return;const x=document.createElement('div');x.className='image-lightbox';x.onclick=()=>x.remove();x.innerHTML='<img src="'+attr(src)+'" alt="Larger image">';document.body.appendChild(x)}
+async function deleteProfilePhoto(type){const payload={name:me.name,username:me.username,bio:me.bio||'',avatarUrl:me.avatarUrl||'',coverUrl:me.coverUrl||'',favoriteQuote:me.favoriteQuote||'',accountPrivacy:me.accountPrivacy||'public',messagePermission:me.messagePermission||'everyone',theme:me.theme||'Rose'};if(type==='avatar')payload.avatarUrl='';else payload.coverUrl='';try{const r=await api('/api/profile',{method:'PUT',body:JSON.stringify(payload)});me=r.user;if(type==='avatar')document.getElementById('profileAvatarPreview').innerHTML=avatarMarkup(me);else document.getElementById('profileCoverPreview').innerHTML='';}catch(e){alert(e.message)}}
+function openCropper(file,type){
+  return new Promise((resolve,reject)=>{
+    if(!file)return resolve('');
+    if(!/^image\/(png|jpe?g|webp)$/i.test(file.type||''))return reject(new Error('Please choose a PNG, JPG, or WEBP image.'));
+    const reader=new FileReader();
+    reader.onerror=()=>reject(new Error('Could not read that image.'));
+    reader.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error('Could not decode that image.'));
+      img.onload=()=>{
+        const avatar=type==='avatar',aspect=avatar?1:3.2;
+        const W=avatar?512:1400,H=Math.round(W/aspect);
+        let zoom=1,baseScale=Math.max(W/img.naturalWidth,H/img.naturalHeight),scale=baseScale;
+        let ox=(W-img.naturalWidth*scale)/2,oy=(H-img.naturalHeight*scale)/2;
+        const m=document.createElement('div');m.className='modal crop-modal';
+        m.innerHTML='<div class="modalbox"><h2>'+ (avatar?'Adjust Profile Picture':'Adjust Cover Photo') +'</h2><p class="crop-hint">Drag the image to reposition it. Use the slider to zoom. The visible area is exactly what will be saved.</p><div class="crop-stage-wrap"><canvas id="cropCanvas" class="crop-stage" width="'+W+'" height="'+H+'"></canvas></div><div class="crop-controls"><label>Zoom</label><input id="cropZoom" type="range" min="1" max="4" step="0.01" value="1"><span id="cropZoomValue">1.00×</span></div><div class="row"><button id="useCrop">Use This Crop</button><button class="secondary" id="cancelCrop">Cancel</button></div></div>';
+        document.body.appendChild(m);
+        const canvas=m.querySelector('#cropCanvas'),ctx=canvas.getContext('2d');
+        const draw=()=>{scale=baseScale*zoom;ctx.clearRect(0,0,W,H);ctx.fillStyle='#101014';ctx.fillRect(0,0,W,H);ctx.drawImage(img,ox,oy,img.naturalWidth*scale,img.naturalHeight*scale);};
+        draw();
+        let dragging=false,sx=0,sy=0,startX=0,startY=0;
+        canvas.addEventListener('pointerdown',e=>{dragging=true;canvas.classList.add('dragging');canvas.setPointerCapture(e.pointerId);sx=e.clientX;sy=e.clientY;startX=ox;startY=oy});
+        canvas.addEventListener('pointermove',e=>{if(!dragging)return;const rect=canvas.getBoundingClientRect();const dx=(e.clientX-sx)*(W/rect.width),dy=(e.clientY-sy)*(H/rect.height);ox=startX+dx;oy=startY+dy;draw()});
+        const stop=e=>{dragging=false;canvas.classList.remove('dragging');try{canvas.releasePointerCapture(e.pointerId)}catch(_){}};
+        canvas.addEventListener('pointerup',stop);canvas.addEventListener('pointercancel',stop);
+        m.querySelector('#cropZoom').addEventListener('input',e=>{
+          const next=Number(e.target.value),cx=W/2,cy=H/2,oldScale=scale;zoom=next;const newScale=baseScale*zoom;
+          ox=cx-(cx-ox)*(newScale/oldScale);oy=cy-(cy-oy)*(newScale/oldScale);
+          m.querySelector('#cropZoomValue').textContent=next.toFixed(2)+'×';draw();
+        });
+        m.querySelector('#cancelCrop').onclick=()=>{m.remove();resolve('')};
+        m.querySelector('#useCrop').onclick=()=>{
+          const out=document.createElement('canvas');out.width=W;out.height=H;const oc=out.getContext('2d');
+          oc.fillStyle='#101014';oc.fillRect(0,0,W,H);oc.drawImage(canvas,0,0);
+          const data=out.toDataURL('image/jpeg',.88);m.remove();resolve(data);
+        };
+      };
+      img.src=reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+function previewAvatar(input){
+  const file=input.files?.[0];if(!file)return;
+  openCropper(file,'avatar').then(src=>{
+    if(!src)return;
+    const hidden=document.getElementById('pfAvatar');if(hidden){hidden.value=src;hidden.dataset.cropped='1'}
+    const el=document.getElementById('profileAvatarPreview');if(el)el.innerHTML='<img class="profile-avatar-img profile-clickable" src="'+attr(src)+'" alt="Avatar preview" onclick="openImageLightbox(this.currentSrc||this.src);event.stopPropagation()">';
+  }).catch(e=>alert(e.message));
+}
+function previewCover(input){
+  const file=input.files?.[0];if(!file)return;
+  openCropper(file,'cover').then(src=>{
+    if(!src)return;
+    const hidden=document.getElementById('pfCover');if(hidden){hidden.value=src;hidden.dataset.cropped='1'}
+    const el=document.getElementById('profileCoverPreview');if(el)el.innerHTML='<img class="upload-preview cover-view-image profile-clickable" style="max-width:100%;width:100%;height:180px;object-fit:cover" src="'+attr(src)+'" alt="Cover preview" onclick="openImageLightbox(this.currentSrc||this.src)">';
+  }).catch(e=>alert(e.message));
+}
 function profileFormSnapshot(){const ids=['pfName','pfUsername','pfAvatar','pfCover','pfBio','pfQuote','pfPrivacy','pfMessages','pfPassword'];return ids.map(id=>document.getElementById(id)?.value||'').join('\u0001');}
-function closeProfileModal(){const modal=window.currentProfileModal;if(!modal)return;const changed=profileFormSnapshot()!==(window.profileSnapshot||'');if(changed&&!confirm('Discard your changes?'))return;modal.remove();window.currentProfileModal=null;}
-function previewAvatar(input){const f=input.files?.[0];if(!f)return;resizeImage(f,700,.78).then(src=>{const el=document.getElementById('profileAvatarPreview');if(el)el.innerHTML=`<img class="profile-avatar-img" src="${attr(src)}" alt="Avatar preview">`;}).catch(e=>alert(e.message));}
-function previewCover(input){const f=input.files?.[0];if(!f)return;resizeImage(f,1600,.78).then(src=>{const el=document.getElementById('profileCoverPreview');if(el)el.innerHTML=`<img class="upload-preview" style="max-width:420px;width:100%;height:150px;object-fit:contain" src="${attr(src)}" alt="Cover preview">`;}).catch(e=>alert(e.message));}
-async function saveProfile(){try{const username=String(document.getElementById('pfUsername')?.value||'').trim().toLowerCase();const changing=username!==String(me.username||'').toLowerCase();if(changing&&!document.getElementById('pfPassword')?.value){alert('Enter your current password to change your username.');return}let avatarUrl=document.getElementById('pfAvatar')?.value.trim()||'';let coverUrl=document.getElementById('pfCover')?.value.trim()||'';const af=document.getElementById('pfAvatarFile')?.files?.[0],cf=document.getElementById('pfCoverFile')?.files?.[0];if(af)avatarUrl=await resizeImage(af,700,.78);if(cf)coverUrl=await resizeImage(cf,1600,.78);const payload={name:document.getElementById('pfName').value,username,bio:document.getElementById('pfBio').value,avatarUrl,coverUrl,favoriteQuote:document.getElementById('pfQuote').value,accountPrivacy:document.getElementById('pfPrivacy').value,messagePermission:document.getElementById('pfMessages').value,theme:me.theme||'Rose'};if(changing)payload.currentPassword=document.getElementById('pfPassword').value;const r=await api('/api/profile',{method:'PUT',body:JSON.stringify(payload)});me=r.user;window.currentProfileModal?.remove();state.view='profile';await dashboard();await render()}catch(e){alert(e.message)}}
+function closeProfileModal(){const modal=window.currentProfileModal;if(!modal)return;const changed=profileFormSnapshot()!==(window.profileSnapshot||'');if(changed&&!confirm('Discard your changes?'))return;modal.remove();window.currentProfileModal=null}
+async function saveProfile(){
+  try{
+    const username=String(document.getElementById('pfUsername')?.value||'').trim().toLowerCase(),changing=username!==String(me.username||'').toLowerCase();
+    if(changing&&!document.getElementById('pfPassword')?.value){alert('Enter your current password to change your username.');return}
+    let avatarUrl=document.getElementById('pfAvatar')?.value.trim()||me.avatarUrl||'';
+    let coverUrl=document.getElementById('pfCover')?.value.trim()||me.coverUrl||'';
+    const af=document.getElementById('pfAvatarFile')?.files?.[0],cf=document.getElementById('pfCoverFile')?.files?.[0];
+    if(af&&!document.getElementById('pfAvatar')?.dataset.cropped)avatarUrl=await resizeImage(af,700,.84);
+    if(cf&&!document.getElementById('pfCover')?.dataset.cropped)coverUrl=await resizeImage(cf,1600,.84);
+    const payload={name:document.getElementById('pfName').value,username,bio:document.getElementById('pfBio').value,avatarUrl,coverUrl,favoriteQuote:document.getElementById('pfQuote').value,accountPrivacy:document.getElementById('pfPrivacy').value,messagePermission:document.getElementById('pfMessages').value,theme:me.theme||'Rose'};
+    if(changing)payload.currentPassword=document.getElementById('pfPassword').value;
+    const r=await api('/api/profile',{method:'PUT',body:JSON.stringify(payload)});me=r.user;
+    window.currentProfileModal?.remove();state.view='profile';await dashboard();await render();
+  }catch(e){alert(e.message)}
+}
 function inboxAvatar(u){return u?.avatarUrl?'<img class="inbox-avatar" src="'+attr(u.avatarUrl)+'" alt="">':'<div class="inbox-avatar">'+esc((u?.name||u?.username||'?')[0].toUpperCase())+'</div>'}
 function inboxBubble(m){return '<div class="chat-bubble '+(m.fromId===me.id?'mine':'theirs')+'"><div>'+esc(m.content)+'</div><span class="small muted">'+new Date(m.createdAt).toLocaleString([], {hour:'numeric',minute:'2-digit'})+'</span></div>'}
 async function inboxPage(selectedId){
@@ -278,10 +367,15 @@ async function doSearch(q){q=String(q||'').trim();if(!q)return;try{state.search=
 function searchPage(){const x=state.search||{q:'',books:[],people:[],diaries:[],posts:[]};return app.innerHTML=shell(`<section class="hero"><h1>Search</h1><p>Results for <b>“${esc(x.q)}”</b>. Only public content is included.</p></section>${resultSection('Books',x.books.map(publicBookCard).join(''),'No public books found.')} ${resultSection('People',x.people.map(u=>`<div class="card"><div class="row">${avatarMarkup(u)}<div><h3>${esc(u.name||u.username)}</h3><p class="muted">@${esc(u.username)}</p></div></div><p>${esc(u.bio||'')}</p><button onclick="openUser('${u.id}')">View Profile</button></div>`).join(''),'No people found.')} ${resultSection('Public Diaries',x.diaries.map(publicDiaryCard).join(''),'No public diaries found.')} ${resultSection('Public Posts',x.posts.map(p=>`<div class="card"><div class="meta"><span class="pill">✍️ Public Post</span><span class="muted">by @${esc(p.author.username)}</span></div><p class="post-body">${esc(p.content)}</p><button onclick="openPost('${p.id}')">Open</button></div>`).join(''),'No public posts found.')}`)}
 function resultSection(title,html,empty){return `<div class="result-section"><h2>${title}</h2><div class="grid">${html||`<div class="card empty muted">${empty}</div>`}</div></div>`}
 async function openUser(id){try{state.profile=await api('/api/users/'+id);state.view='user';render()}catch(e){alert(e.message)}}
-function avatarMarkup(u){return u.avatarUrl?`<img class="profile-avatar-img" src="${attr(u.avatarUrl)}" alt="">`:`<div class="avatar">${esc((u.name||u.username||'?')[0].toUpperCase())}</div>`}
+function openImageLightbox(src){if(!src)return;const x=document.createElement('div');x.className='image-lightbox';x.setAttribute('role','dialog');x.setAttribute('aria-label','Larger image');x.onclick=()=>x.remove();x.innerHTML='<img src="'+attr(src)+'" alt="Larger image">';document.body.appendChild(x)}
+function avatarMarkup(u){return u.avatarUrl?'<img class="profile-avatar-img profile-clickable" src="'+attr(u.avatarUrl)+'" alt="'+attr(u.name||u.username||'Profile picture')+'" onclick="openImageLightbox(this.currentSrc||this.src);event.stopPropagation()">':'<div class="avatar profile-clickable" onclick="event.stopPropagation()">'+esc((u.name||u.username||'?')[0].toUpperCase())+'</div>'}
 function ownDiaryCard(x){return `<div class="card own-content-card"><div class="diary-meta"><span class="pill">${visibilityLabel(x.visibility)}</span><span class="muted small">${esc(x.date)} · ${new Date(x.updatedAt||x.createdAt).toLocaleString()}</span></div><h3>${esc(x.title||'Untitled Diary')}</h3>${x.mood?`<span class="pill">💭 ${esc(x.mood)}</span>`:''}${x.weather?` <span class="pill">${esc(x.weather)}</span>`:''}${x.season?` <span class="pill">🍃 ${esc(x.season)}</span>`:''}${x.imageUrl?`<img class="diary-photo" src="${attr(x.imageUrl)}" alt="Diary photo">`:''}<p class="diary-body">${esc(x.content||'')}</p><button class="secondary" onclick="openDiary('${x.id}')">Open</button> <button class="ghost" onclick="editDiary('${x.id}')">Edit</button> <button class="danger" onclick="moveToTrash('diaries','${x.id}')">Delete</button></div>`}
 function ownPostCard(p){return `<div class="card own-content-card"><div class="meta"><span class="pill">${p.archivedAt?'🗂 Archived Thought':visibilityLabel(p.visibility)}</span><span class="muted small">${new Date(p.createdAt).toLocaleString()}</span></div><p class="post-body">${esc(p.content)}</p>${p.archivedAt?`<p class="small muted">Moved to Archive Thoughts after 24 hours.</p>`:''}<button class="secondary" onclick="openPost('${p.id}')">Open</button> <button class="ghost" onclick="editPost('${p.id}')">Edit</button> <button class="danger" onclick="moveToTrash('posts','${p.id}')">Delete</button></div>`}
-function profileCard(u,own=false,relationship={}){const cover=u.coverUrl?`style="background-image:url('${attr(u.coverUrl)}')"`:'';return `<div class="profile-cover" ${cover}><div class="profile-head">${avatarMarkup(u)}<div style="flex:1"><h1>${esc(u.name||u.username)}</h1><p class="muted">@${esc(u.username)}</p><p>${esc(u.bio||'')}</p>${u.favoriteQuote?`<p class="quote">“${esc(u.favoriteQuote)}”</p>`:''}${u.accountPrivacy==='private'&&!own?`<div class="profile-privacy-note">🔒 This account is private. Follow them or become friends to see more.</div>`:''}</div>${own?`<button onclick="editProfile()">✦ Edit Profile</button>`:`<div class="social-actions">${relationship.following?`<button class="secondary" onclick="toggleFollow('${u.id}',true)">Following</button>`:relationship.pendingFollow?`<button class="secondary" onclick="cancelFollowRequest('${u.id}')">Requested · Cancel</button>`:`<button onclick="toggleFollow('${u.id}',false)">Follow</button>`}${relationship.friends?`<button class="secondary">Friends ✓</button>`:''}<button class="secondary" onclick="openMessage('${u.id}')">💌 Message</button></div>`}</div></div>`}
+function profileCard(u,own=false,relationship={}){
+  const cover=u.coverUrl?'<div class="profile-cover" style="background-image:url(\''+attr(u.coverUrl)+'\')"><button class="profile-cover-clickable" aria-label="View cover photo" onclick="openImageLightbox(\''+attr(u.coverUrl)+'\');event.stopPropagation()"></button>': '<div class="profile-cover">';
+  const actions=own?'<button onclick="editProfile()">✦ Edit Profile</button>':'<div class="social-actions">'+(relationship.following?'<button class="secondary" onclick="toggleFollow(\''+u.id+'\',true)">Following</button>':relationship.pendingFollow?'<button class="secondary" onclick="cancelFollowRequest(\''+u.id+'\')">Requested · Cancel</button>':'<button onclick="toggleFollow(\''+u.id+'\',false)">Follow</button>')+(relationship.friends?'<button class="secondary">Friends ✓</button>':'')+'<button class="secondary" onclick="openMessage(\''+u.id+'\')">💌 Message</button></div>';
+  return cover+'<div class="profile-head">'+avatarMarkup(u)+'<div style="flex:1"><h1>'+esc(u.name||u.username)+'</h1><p class="muted">@'+esc(u.username)+'</p><p class="profile-bio">'+esc(u.bio||'')+'</p>'+(u.favoriteQuote?'<p class="quote">“'+esc(u.favoriteQuote)+'”</p>':'')+(u.accountPrivacy==='private'&&!own?'<div class="profile-privacy-note">🔒 This account is private. Follow them or become friends to see more.</div>':'')+'</div>'+actions+'</div></div>';
+}
 function userPage(){const x=state.profile;return app.innerHTML=shell(`${profileCard(x.user,false,x.relationship||{})}<div class="social-stats section"><div class="social-stat"><b>${x.counts?.followers||0}</b><span class="muted">Followers</span></div><div class="social-stat"><b>${x.counts?.following||0}</b><span class="muted">Following</span></div><div class="social-stat"><b>${x.counts?.friends||0}</b><span class="muted">Friends</span></div></div>${x.user.accountPrivacy==='private'&&!(x.relationship?.following||x.relationship?.friends)?'<div class="card empty muted">This profile is private.</div>':`${resultSection('Books',x.books.map(publicBookCard).join(''),'No visible public books yet.')} ${resultSection('Diaries',x.diaries.map(publicDiaryCard).join(''),'No diaries available to you.')} ${resultSection('Posts',x.posts.map(p=>`<div class="card"><div class="meta"><span class="pill">✍️ ${visibilityLabel(p.visibility)}</span></div><p class="post-body">${esc(p.content)}</p><button onclick="openPost('${p.id}')">Open</button></div>`).join(''),'No posts available to you.')}`}`)}
 async function profile(){try{state.data=await api('/api/dashboard')}catch(e){alert(e.message);return}const s=state.data.social||{followers:0,following:0,friends:0};const diaries=state.data.diaries||[];const posts=state.data.posts||[];const books=state.data.books||[];return app.innerHTML=shell(`${profileCard(me,true)}<div class="social-stats section"><div class="social-stat" onclick="openSocial('followers')"><b>${s.followers}</b><span class="muted">Followers</span></div><div class="social-stat" onclick="openSocial('following')"><b>${s.following}</b><span class="muted">Following</span></div><div class="social-stat" onclick="openSocial('friends')"><b>${s.friends}</b><span class="muted">Friends</span></div></div><section class="section profile-content"><div class="home-section-head"><div><h2>📔 My Diaries</h2><p class="muted">Your diary entries, including private ones.</p></div><button class="secondary" onclick="newDiary()">Write in Diary</button></div><div class="profile-grid">${diaries.map(ownDiaryCard).join('')||'<div class="card empty muted">Your diary is still waiting for its first entry.</div>'}</div></section><section class="section profile-content"><div class="home-section-head"><div><h2>💭 My Shared Thoughts</h2><p class="muted">Everything you've written, including archived thoughts.</p></div><button class="secondary" onclick="newPost()">Share a Thought</button></div><div class="profile-grid">${posts.map(ownPostCard).join('')||'<div class="card empty muted">You have not shared a thought yet.</div>'}</div></section><section class="section profile-content"><div class="home-section-head"><div><h2>📚 My Books / Stories</h2><p class="muted">Stories you've created on Lumora.</p></div><button class="secondary" onclick="newBook()">Write a Book</button></div><div class="profile-grid">${books.map(b=>`<div class="card"><div class="book-cover">${b.cover?`<img src="${attr(b.cover)}" alt="${attr(b.title)} cover">`:`<div class="book-cover-placeholder">${esc(b.title)}</div>`}</div><div class="meta"><span class="pill">${b.visibility==='public'?'🌎 Public':'🔒 Only Me'}</span></div><h3>${esc(b.title)}</h3><p>${esc(b.description||'')}</p><button onclick="readBook('${b.id}')">Read</button></div>`).join('')||'<div class="card empty muted">You have not created a book yet.</div>'}</div></section><section class="hero profile-footer-note"><h2>Your little corner of Lumora ✦</h2><p>Share the stories you want the world to read, and keep the rest just for you.</p></section>`) }
 async function moveToTrash(type,id){if(!confirm('Move this item to Trash? You can restore it within 30 days.'))return;try{await api('/api/'+type+'/'+id,{method:'DELETE'});await dashboard();}catch(e){alert(e.message)}}
