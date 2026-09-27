@@ -324,7 +324,7 @@ start().catch(e=>{console.error(e);auth()});
   function truncateWords(text,max){const words=String(text||'').trim().split(/\s+/).filter(Boolean);return words.length<=max?words.join(' '):words.slice(0,max).join(' ')+'…'}
   function mentionText(text,mentions){
     let safe=esc(String(text||''));(Array.isArray(mentions)?mentions:[]).forEach(u=>{
-      const username=String(u?.username||'').replace(/[.*+?^$()|[\]\\]/g,'\\</script></body></html>');if(!username)return;
+      const username=String(u?.username||'').replace(/[.*+?^$()|[\]\\]/g,'\\replace(/[.*+?^$()|[\]\\]/g,'\\</script></body></html>')');if(!username)return;
       safe=safe.replace(new RegExp('@'+username+'\\b','ig'),'<span class="mention-link" onclick="openUser(\''+attr(u.id)+'\')">@'+esc(u.username)+'</span>');
     });return safe;
   }
