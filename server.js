@@ -284,12 +284,12 @@ function searchable(value) { return String(value || '').toLowerCase(); }
 
 
 async function sendVerificationEmail(u, token, code) {
-  const base = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
-  const verifyUrl = `${base}/verify-email?token=${encodeURIComponent(token)}`;
+  // Email verification is intentionally code-only. The verification-link path
+  // remains available for compatibility, but no verification URL is emailed.
   const smtpHost = process.env.SMTP_HOST;
   if (!smtpHost) {
-    console.log(`\n[Lumora email verification] ${u.email}: ${verifyUrl}\n`);
-    return { delivered: false, previewUrl: verifyUrl };
+    console.log(`\n[Lumora email verification] ${u.email}: code ${code}\n`);
+    return { delivered: false, previewCode: code };
   }
   const transporter = nodemailer.createTransport({
     host: smtpHost,
@@ -300,9 +300,9 @@ async function sendVerificationEmail(u, token, code) {
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: u.email,
-    subject: 'Verify your Lumora email',
-    text: `Welcome to Lumora.\n\nYour Lumora verification code is: ${code}\n\nEnter this 6-digit code in Lumora to verify your email. It expires in 24 hours.\n\nVerification link: ${verifyUrl}`, 
-    html: `<p>Welcome to Lumora.</p><p>Your Lumora verification code is:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px">${code}</p><p>You can enter this code on the Lumora verification page. It expires in 24 hours.</p><p>If you prefer, you can still <a href="${verifyUrl}">verify by link</a>.</p>`
+    subject: 'Your Lumora verification code',
+    text: `Welcome to Lumora.\n\nYour Lumora verification code is: ${code}\n\nEnter this 6-digit code in Lumora to verify your email. This code expires in 24 hours.`,
+    html: `<p>Welcome to Lumora.</p><p>Your Lumora verification code is:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px"><b>${code}</b></p><p>Enter this 6-digit code in Lumora to verify your email.</p><p>This code expires in <b>24 hours</b>.</p>`
   });
   return { delivered: true };
 }
@@ -322,8 +322,17 @@ function createPasswordReset(d, u) {
   d.passwordResets.push({ tokenHash, userId: u.id, expiresAt: Date.now() + 60 * 60 * 1000, usedAt: null });
   return token;
 }
-async function sendPasswordResetEmail(u, token) {
-  const base = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+async function sendPasswordResetEmail(u, token, request) {
+  // Prefer the configured public URL. If it is absent, derive the public host from
+  // the current Render request so reset emails never point at localhost.
+  let base = String(process.env.APP_URL || '').trim().replace(/\/+$/, '');
+  if (!base && request) {
+    const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const proto = forwardedProto || (request.socket && request.socket.encrypted ? 'https' : 'http');
+    const host = String(request.headers.host || '').trim();
+    if (host) base = `${proto}://${host}`;
+  }
+  if (!base) base = `http://localhost:${PORT}`;
   const resetUrl = `${base}/reset-password?token=${encodeURIComponent(token)}`;
   const smtpHost = process.env.SMTP_HOST;
   if (!smtpHost) return { delivered: false, previewUrl: resetUrl };
@@ -374,7 +383,13 @@ function handleEmailVerificationLink(req, res, url) {
 
 function passwordResetPage(token, message='') {
   const safeToken = String(token || '').replace(/[^a-f0-9]/gi, '');
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reset your Lumora password</title><style>body{margin:0;background:#fbf7fa;color:#352934;font-family:Georgia,serif}.wrap{max-width:520px;margin:70px auto;padding:28px}.card{background:#fff;border:1px solid #eadce5;border-radius:24px;padding:30px;box-shadow:0 18px 50px #6b3f5518}input{width:100%;box-sizing:border-box;padding:13px 14px;border:1px solid #dccbd5;border-radius:12px;margin:8px 0 16px;font:inherit}button{border:0;border-radius:12px;padding:12px 18px;background:#9b4f79;color:#fff;font:inherit;cursor:pointer}a{color:#9b4f79}.msg{padding:12px;border-radius:12px;background:#f7edf3;margin-bottom:15px}</style></head><body><div class="wrap"><div class="card"><h1>Reset your Lumora password</h1>${message?`<div class="msg">${message}</div>`:''}<form id="f"><label>New password</label><input id="p" type="password" minlength="8" autocomplete="new-password" required><label>Confirm new password</label><input id="c" type="password" minlength="8" autocomplete="new-password" required><button>Reset password</button></form><p id="out"></p><p><a href="/">Back to Lumora</a></p></div></div><script>const token=${JSON.stringify(safeToken)};document.getElementById('f').onsubmit=async(e)=>{e.preventDefault();const p=document.getElementById('p').value,c=document.getElementById('c').value,o=document.getElementById('out');if(p.length<8)return o.textContent='Password must be at least 8 characters.';if(p!==c)return o.textContent='Passwords do not match.';try{const r=await fetch('/api/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,password:p})});const x=await r.json();if(!r.ok)throw new Error(x.error||'Could not reset password.');document.getElementById('f').style.display='none';o.innerHTML='Password reset successfully. <a href="/">Open Lumora and log in.</a>';}catch(err){o.textContent=err.message;}}</script></body></html>`;
+  const d = db();
+  const valid = /^[a-f0-9]{64}$/i.test(safeToken) && d.passwordResets.some(x => x.tokenHash === hashResetToken(safeToken) && !x.usedAt && x.expiresAt > Date.now());
+  const safeMessage = String(message || '').replace(/[<>&"]/g, '');
+  if (!valid) {
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reset your Lumora password</title><style>body{margin:0;background:#fbf7fa;color:#352934;font-family:Georgia,serif}.wrap{max-width:520px;margin:70px auto;padding:28px}.card{background:#fff;border:1px solid #eadce5;border-radius:24px;padding:30px;box-shadow:0 18px 50px #6b3f5518}a{color:#9b4f79}.msg{padding:12px;border-radius:12px;background:#f7edf3;margin-bottom:15px}</style></head><body><div class="wrap"><div class="card"><h1>Reset link expired</h1><div class="msg">This password reset link is invalid, expired, or has already been used.</div><p>Please return to Lumora and request a new password reset email.</p><p><a href="/">Back to Lumora</a></p></div></div></body></html>`;
+  }
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reset your Lumora password</title><style>body{margin:0;background:#fbf7fa;color:#352934;font-family:Georgia,serif}.wrap{max-width:520px;margin:70px auto;padding:28px}.card{background:#fff;border:1px solid #eadce5;border-radius:24px;padding:30px;box-shadow:0 18px 50px #6b3f5518}input{width:100%;box-sizing:border-box;padding:13px 14px;border:1px solid #dccbd5;border-radius:12px;margin:8px 0 16px;font:inherit}button{border:0;border-radius:12px;padding:12px 18px;background:#9b4f79;color:#fff;font:inherit;cursor:pointer}a{color:#9b4f79}.msg{padding:12px;border-radius:12px;background:#f7edf3;margin-bottom:15px}</style></head><body><div class="wrap"><div class="card"><h1>Reset your Lumora password</h1>${safeMessage?`<div class="msg">${safeMessage}</div>`:''}<p>Choose a new password for your Lumora account.</p><form id="f"><label>New password</label><input id="p" type="password" minlength="8" autocomplete="new-password" required><label>Confirm new password</label><input id="c" type="password" minlength="8" autocomplete="new-password" required><button>Reset password</button></form><p id="out"></p><p><a href="/">Back to Lumora</a></p></div></div><script>const token=${JSON.stringify(safeToken)};document.getElementById('f').onsubmit=async(e)=>{e.preventDefault();const p=document.getElementById('p').value,c=document.getElementById('c').value,o=document.getElementById('out');if(p.length<8)return o.textContent='Password must be at least 8 characters.';if(p!==c)return o.textContent='Passwords do not match.';try{const r=await fetch('/api/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,password:p})});const x=await r.json();if(!r.ok)throw new Error(x.error||'Could not reset password.');document.getElementById('f').style.display='none';o.innerHTML='Password reset successfully. <a href="/">Open Lumora and log in.</a>';}catch(err){o.textContent=err.message;}}</script></body></html>`;
 }
 
 function targetAllowed(d, type, targetId, u) {
@@ -416,7 +431,7 @@ async function api(req, res) {
     if (!u) return send(res, 200, { ok: true, message: 'If that account exists, a password reset email has been sent.' });
     const token = createPasswordReset(d, u); save(d);
     try {
-      const delivery = await sendPasswordResetEmail(u, token);
+      const delivery = await sendPasswordResetEmail(u, token, req);
       return send(res, 200, { ok: true, message: 'If that account exists, a password reset email has been sent.', previewUrl: delivery.previewUrl || null });
     } catch (e) {
       console.error('Password reset email failed:', e.message);
@@ -482,7 +497,7 @@ async function api(req, res) {
     save(d);
     let delivery = { delivered: false };
     try { delivery = await sendVerificationEmail(u, verification.token, verification.code); } catch (e) { console.error('Verification email failed:', e.message); }
-    return send(res, 201, { user: safeUser(u), requiresVerification: true, previewUrl: delivery.previewUrl || null },
+    return send(res, 201, { user: safeUser(u), requiresVerification: true, previewCode: delivery.previewCode || null },
       { 'Set-Cookie': cookie('lumora_session', sessionToken, 30 * 24 * 60 * 60) });
   }
 
@@ -494,7 +509,7 @@ async function api(req, res) {
     const verification = createVerification(d, u); save(d);
     try {
       const delivery = await sendVerificationEmail(u, verification.token, verification.code);
-      return send(res, 200, { ok: true, previewUrl: delivery.previewUrl || null });
+      return send(res, 200, { ok: true, previewCode: delivery.previewCode || null });
     } catch (e) {
       console.error(e); return send(res, 500, { error: 'Could not send the verification email.' });
     }
@@ -880,7 +895,7 @@ async function startServer() {
       if(!file.startsWith(PUBLIC))return send(res,403,{error:'Forbidden'});
       if(!fs.existsSync(file)||fs.statSync(file).isDirectory())return send(res,404,{error:'Not found'});
       const ext=path.extname(file);const types={'.html':'text/html','.js':'text/javascript','.css':'text/css','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'};
-      res.writeHead(200,{'Content-Type':types[ext]||'application/octet-stream'});fs.createReadStream(file).pipe(res);
+      res.writeHead(200,{'Content-Type':types[ext]||'application/octet-stream', ...(ext === '.html' ? {'Cache-Control':'no-store'} : {})});fs.createReadStream(file).pipe(res);
     }catch(e){console.error(e);send(res,500,{error:'Server error.'});}
   });
   try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); }
