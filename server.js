@@ -316,26 +316,26 @@ function createVerification(d, u) {
 
 function hashResetToken(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
 function createPasswordReset(d, u) {
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = hashResetToken(token);
-  d.passwordResets = d.passwordResets.filter(x => x.userId !== u.id && x.expiresAt > Date.now());
-  d.passwordResets.push({ tokenHash, userId: u.id, expiresAt: Date.now() + 60 * 60 * 1000, usedAt: null });
-  return token;
+  const codeHash = hashResetToken(code);
+  d.passwordResets = d.passwordResets.filter(x => x.userId !== u.id);
+  d.passwordResets.push({
+    tokenHash,
+    codeHash,
+    userId: u.id,
+    codeExpiresAt: Date.now() + 10 * 60 * 1000,
+    expiresAt: Date.now() + 15 * 60 * 1000,
+    codeVerifiedAt: null,
+    usedAt: null
+  });
+  return { token, code };
 }
-async function sendPasswordResetEmail(u, token, request) {
-  // Prefer the configured public URL. If it is absent, derive the public host from
-  // the current Render request so reset emails never point at localhost.
-  let base = String(process.env.APP_URL || '').trim().replace(/\/+$/, '');
-  if (!base && request) {
-    const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-    const proto = forwardedProto || (request.socket && request.socket.encrypted ? 'https' : 'http');
-    const host = String(request.headers.host || '').trim();
-    if (host) base = `${proto}://${host}`;
-  }
-  if (!base) base = `http://localhost:${PORT}`;
-  const resetUrl = `${base}/reset-password?token=${encodeURIComponent(token)}`;
+
+async function sendPasswordResetEmail(u, code) {
   const smtpHost = process.env.SMTP_HOST;
-  if (!smtpHost) return { delivered: false, previewUrl: resetUrl };
+  if (!smtpHost) return { delivered: false, previewCode: code };
   const transporter = nodemailer.createTransport({
     host: smtpHost,
     port: Number(process.env.SMTP_PORT || 587),
@@ -345,9 +345,9 @@ async function sendPasswordResetEmail(u, token, request) {
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: u.email,
-    subject: 'Reset your Lumora password',
-    text: `We received a request to reset your Lumora password. Use this secure link within 1 hour: ${resetUrl}\n\nIf you did not request this, you can ignore this email.`,
-    html: `<p>We received a request to reset your Lumora password.</p><p><a href="${resetUrl}" style="display:inline-block;padding:12px 18px;background:#9b4f79;color:#fff;text-decoration:none;border-radius:10px">Reset my password</a></p><p>This link expires in <b>1 hour</b> and can only be used once.</p><p>If you did not request this, you can ignore this email.</p>`
+    subject: 'Your Lumora password reset code',
+    text: `We received a request to reset your Lumora password. Your 6-digit verification code is: ${code}\n\nThis code expires in 10 minutes. If you did not request this, you can ignore this email.`,
+    html: `<p>We received a request to reset your Lumora password.</p><p>Your 6-digit verification code is:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px"><b>${code}</b></p><p>This code expires in <b>10 minutes</b>. If you did not request this, you can ignore this email.</p>`
   });
   return { delivered: true };
 }
@@ -426,35 +426,73 @@ async function api(req, res) {
     const x = await body(req);
     const identifier = String(x.identifier || x.email || '').trim().toLowerCase();
     const d = db();
-    const u = d.users.find(user => user.email === identifier || user.username === identifier);
-    // Always return the same response so the endpoint does not reveal whether an account exists.
-    if (!u) return send(res, 200, { ok: true, message: 'If that account exists, a password reset email has been sent.' });
-    const token = createPasswordReset(d, u); save(d);
+    const user = d.users.find(item => item.email === identifier || item.username === identifier);
+    if (!user) return send(res, 200, { ok: true, message: 'If that account exists, a password reset code has been sent.' });
+    const reset = createPasswordReset(d, user);
+    save(d);
     try {
-      const delivery = await sendPasswordResetEmail(u, token, req);
-      return send(res, 200, { ok: true, message: 'If that account exists, a password reset email has been sent.', previewUrl: delivery.previewUrl || null });
+      const delivery = await sendPasswordResetEmail(user, reset.code);
+      return send(res, 200, {
+        ok: true,
+        message: 'If that account exists, a password reset code has been sent.',
+        previewCode: delivery.previewCode || null
+      });
     } catch (e) {
       console.error('Password reset email failed:', e.message);
-      return send(res, 200, { ok: true, message: 'If that account exists, a password reset email has been sent.' });
+      return send(res, 200, { ok: true, message: 'If that account exists, a password reset code has been sent.' });
     }
+  }
+
+  if (req.method === 'POST' && p === '/api/verify-password-reset-code') {
+    const x = await body(req);
+    const identifier = String(x.identifier || x.email || '').trim().toLowerCase();
+    const code = String(x.code || '').replace(/\D/g, '');
+    if (!/^\d{6}$/.test(code)) return send(res, 400, { error: 'Please enter the 6-digit password reset code.' });
+    const d = db();
+    const user = d.users.find(item => item.email === identifier || item.username === identifier);
+    const reset = user && d.passwordResets.find(item =>
+      item.userId === user.id &&
+      !item.usedAt &&
+      item.codeExpiresAt > Date.now() &&
+      (item.code === code || item.codeHash === hashResetToken(code))
+    );
+    if (!reset) return send(res, 400, { error: 'That password reset code is invalid or expired.' });
+    reset.codeVerifiedAt = Date.now();
+    reset.expiresAt = Date.now() + 15 * 60 * 1000;
+    save(d);
+    return send(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && p === '/api/reset-password') {
     const x = await body(req);
-    const token = String(x.token || '');
     const password = String(x.password || '');
-    if (!/^[a-f0-9]{64}$/i.test(token)) return send(res, 400, { error: 'This password reset link is invalid or expired.' });
     if (password.length < 8) return send(res, 400, { error: 'Password must be at least 8 characters.' });
     const d = db();
-    const tokenHash = hashResetToken(token);
-    const r = d.passwordResets.find(x => x.tokenHash === tokenHash && !x.usedAt && x.expiresAt > Date.now());
-    if (!r) return send(res, 400, { error: 'This password reset link is invalid or expired.' });
-    const u = d.users.find(x => x.id === r.userId);
-    if (!u) return send(res, 400, { error: 'This password reset link is invalid or expired.' });
-    u.passwordHash = hashPassword(password);
-    r.usedAt = Date.now();
-    d.passwordResets = d.passwordResets.filter(x => x.userId !== u.id);
-    d.sessions = d.sessions.filter(x => x.userId !== u.id);
+    const token = String(x.token || '');
+    let reset = null;
+
+    if (/^[a-f0-9]{64}$/i.test(token)) {
+      reset = d.passwordResets.find(item => item.tokenHash === hashResetToken(token) && !item.usedAt && item.expiresAt > Date.now());
+    } else {
+      const identifier = String(x.identifier || x.email || '').trim().toLowerCase();
+      const code = String(x.code || '').replace(/\D/g, '');
+      const user = d.users.find(item => item.email === identifier || item.username === identifier);
+      reset = user && d.passwordResets.find(item =>
+        item.userId === user.id &&
+        !item.usedAt &&
+        item.codeVerifiedAt &&
+        item.expiresAt > Date.now() &&
+        (item.code === code || item.codeHash === hashResetToken(code))
+      );
+    }
+
+    if (!reset) return send(res, 400, { error: 'Your password reset code is invalid or expired. Please request a new code.' });
+    const user = d.users.find(item => item.id === reset.userId);
+    if (!user) return send(res, 400, { error: 'Your password reset request is invalid or expired.' });
+    user.passwordHash = hashPassword(password);
+    reset.usedAt = Date.now();
+    d.passwordResets = d.passwordResets.filter(item => item.userId !== user.id);
+    d.sessions = d.sessions.filter(item => item.userId !== user.id);
     save(d);
     return send(res, 200, { ok: true });
   }
@@ -526,7 +564,7 @@ async function api(req, res) {
     d.sessions = d.sessions.filter(s => s.userId !== u.id || s.expiresAt <= Date.now());
     d.sessions.push({ token, userId: u.id, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 });
     save(d);
-    return send(res, 200, { user: safeUser(u), requiresVerification: !u.emailVerified },
+    return send(res, 200, { user: safeUser(u) },
       { 'Set-Cookie': cookie('lumora_session', token, 30 * 24 * 60 * 60) });
   }
 
