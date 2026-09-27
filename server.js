@@ -417,6 +417,17 @@ function messagingAllowed(d,from,to) {
   return false;
 }
 
+function notifyBookChapterUpdate(d,book,chapter,actorId){
+  if(!book||!chapter||!actorId)return;
+  const recipients=new Set();
+  for(const f of d.follows||[])if(f.followingId===book.userId&&f.followerId!==actorId)recipients.add(f.followerId);
+  for(const r of d.bookReads||[])if(r.bookId===book.id&&r.userId!==actorId)recipients.add(r.userId);
+  for(const r of d.readingProgress||[])if(r.bookId===book.id&&r.userId!==actorId)recipients.add(r.userId);
+  const actor=d.users.find(x=>x.id===actorId);
+  const message=(actor?.name||'Author')+' added a new chapter to "'+(book.title||'this book')+'".';
+  for(const userId of recipients)notify(d,userId,'new_chapter',actorId,message,'chapter',chapter.id);
+}
+
 async function api(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const p = url.pathname;
@@ -884,8 +895,10 @@ async function api(req, res) {
   if (req.method === 'PUT' && p.startsWith('/api/books/')) {
     const b=d.books.find(x=>x.id===p.split('/').pop()&&x.userId===u.id&&!x.deletedAt);if(!b)return send(res,404,{error:'Book not found.'});
     const x=await body(req);
+    const previous=new Map((b.chapters||[]).map(c=>[c.id,{title:c.title||'',content:c.content||'',contentHtml:c.contentHtml||''}]));
     const chapters=Array.isArray(x.chapters)?x.chapters.map(c=>({id:c.id||id(),title:String(c.title||''),content:String(c.content||''),contentHtml:sanitizeStoryHtml(c.contentHtml||'')})):b.chapters;
     Object.assign(b,{title:x.title!==undefined?String(x.title):b.title,description:x.description!==undefined?String(x.description):b.description,cover:x.cover!==undefined?String(x.cover).slice(0,5000000):b.cover,genre:x.genre!==undefined?(GENRES.includes(String(x.genre))?String(x.genre):''):b.genre,tags:x.tags!==undefined?cleanTags(x.tags):Array.isArray(b.tags)?b.tags:[],visibility:x.visibility==='public'?'public':x.visibility==='private'?'private':b.visibility,fontFamily:x.fontFamily!==undefined?storyFont(x.fontFamily):storyFont(b.fontFamily),chapters,updatedAt:Date.now()});
+    for(const chapter of chapters){const before=previous.get(chapter.id);const changed=!before||before.title!==chapter.title||before.content!==chapter.content||before.contentHtml!==chapter.contentHtml;if(changed)notifyBookChapterUpdate(d,b,chapter,u.id);}
     save(d);return send(res,200,{book:b});
   }
 
