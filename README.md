@@ -22,6 +22,18 @@ Lumora is a writing, reading, diary, and social-storytelling web app.
 - Backend privacy enforcement for public/follower/friend/private content
 - Email verification before full access
 
+
+## Authentication fixes in this version
+
+- Login now includes a **Forgot Password?** link beside the account-creation option.
+- Password reset uses one-time, hashed reset tokens with a 1-hour expiry and invalidates existing sessions after a successful reset.
+- Email verification includes a 6-digit code entry UI with expiry/error handling and a resend-code action.
+- The email verification link is served directly by the Node server at `/verify-email`, fixing the previous Render/static-file 404.
+- New verification tokens/codes are stored as hashes; older verification records using plaintext fields remain readable for compatibility.
+- HTTPS deployments now mark the authentication session cookie as `Secure`.
+- Brevo remains the existing SMTP delivery mechanism configured through Render environment variables.
+
+
 ## Run on Windows
 
 Open VS Code in the folder containing `package.json`, then use the VS Code terminal:

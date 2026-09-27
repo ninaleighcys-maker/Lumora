@@ -140,7 +140,8 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(test, 'hex'));
 }
 function cookie(name, value, maxAge) {
-  return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; ${maxAge === 0 ? 'Max-Age=0' : `Max-Age=${maxAge}`}`;
+  const secure = process.env.NODE_ENV === 'production' || String(process.env.APP_URL || '').startsWith('https://');
+  return `${name}=${value}; HttpOnly; SameSite=Lax; Path=/; ${secure ? 'Secure; ' : ''}${maxAge === 0 ? 'Max-Age=0' : `Max-Age=${maxAge}`}`;
 }
 function getCookies(req) {
   return Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(x => {
@@ -309,7 +310,7 @@ function createVerification(d, u) {
   const token = crypto.randomBytes(32).toString('hex');
   const code = String(crypto.randomInt(100000, 1000000));
   d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
-  d.emailVerifications.push({ token, code, userId: u.id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+  d.emailVerifications.push({ tokenHash: hashResetToken(token), codeHash: hashResetToken(code), userId: u.id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
   return { token, code };
 }
 
@@ -341,6 +342,36 @@ async function sendPasswordResetEmail(u, token) {
   });
   return { delivered: true };
 }
+
+function emailVerificationPage(title, message, ok = false) {
+  const safeTitle = String(title || 'Email verification').replace(/[<>&"]/g, '');
+  const safeMessage = String(message || '').replace(/[<>&"]/g, '');
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle} • Lumora</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf7fb;color:#3d3140;font-family:Georgia,'Times New Roman',serif}.box{width:min(560px,calc(100% - 40px));box-sizing:border-box;padding:38px;border:1px solid #eadfea;border-radius:24px;background:white;box-shadow:0 16px 50px rgba(80,55,85,.10);text-align:center}h1{margin:0 0 14px;font-size:34px}.icon{font-size:42px;margin-bottom:12px}p{line-height:1.7;color:#6e6270}.btn{display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#9b4f79;color:#fff;text-decoration:none}</style></head><body><main class="box"><div class="icon">${ok?'✓':'✉'}</div><h1>${safeTitle}</h1><p>${safeMessage}</p><a class="btn" href="/">Open Lumora</a></main></body></html>`;
+}
+function handleEmailVerificationLink(req, res, url) {
+  const token = url.searchParams.get('token') || '';
+  if (!/^[a-f0-9]{64}$/i.test(token)) {
+    res.writeHead(400, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(emailVerificationPage('Invalid verification link', 'This verification link is invalid. Please return to Lumora and request a new verification email.'));
+  }
+  const d = db();
+  const v = d.emailVerifications.find(x => x.expiresAt > Date.now() && (x.token === token || x.tokenHash === hashResetToken(token)));
+  if (!v) {
+    res.writeHead(400, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(emailVerificationPage('Verification link expired', 'This verification link is invalid or has expired. Please return to Lumora and request a new verification email.'));
+  }
+  const u = d.users.find(x => x.id === v.userId);
+  if (!u) {
+    res.writeHead(404, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+    return res.end(emailVerificationPage('Account not found', 'We could not find the Lumora account connected to this verification link.'));
+  }
+  u.emailVerified = true;
+  d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
+  save(d);
+  res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
+  return res.end(emailVerificationPage('Email verified ✓', 'Your Lumora email has been verified successfully. You can now open Lumora and log in.', true));
+}
+
 function passwordResetPage(token, message='') {
   const safeToken = String(token || '').replace(/[^a-f0-9]/gi, '');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reset your Lumora password</title><style>body{margin:0;background:#fbf7fa;color:#352934;font-family:Georgia,serif}.wrap{max-width:520px;margin:70px auto;padding:28px}.card{background:#fff;border:1px solid #eadce5;border-radius:24px;padding:30px;box-shadow:0 18px 50px #6b3f5518}input{width:100%;box-sizing:border-box;padding:13px 14px;border:1px solid #dccbd5;border-radius:12px;margin:8px 0 16px;font:inherit}button{border:0;border-radius:12px;padding:12px 18px;background:#9b4f79;color:#fff;font:inherit;cursor:pointer}a{color:#9b4f79}.msg{padding:12px;border-radius:12px;background:#f7edf3;margin-bottom:15px}</style></head><body><div class="wrap"><div class="card"><h1>Reset your Lumora password</h1>${message?`<div class="msg">${message}</div>`:''}<form id="f"><label>New password</label><input id="p" type="password" minlength="8" autocomplete="new-password" required><label>Confirm new password</label><input id="c" type="password" minlength="8" autocomplete="new-password" required><button>Reset password</button></form><p id="out"></p><p><a href="/">Back to Lumora</a></p></div></div><script>const token=${JSON.stringify(safeToken)};document.getElementById('f').onsubmit=async(e)=>{e.preventDefault();const p=document.getElementById('p').value,c=document.getElementById('c').value,o=document.getElementById('out');if(p.length<8)return o.textContent='Password must be at least 8 characters.';if(p!==c)return o.textContent='Passwords do not match.';try{const r=await fetch('/api/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,password:p})});const x=await r.json();if(!r.ok)throw new Error(x.error||'Could not reset password.');document.getElementById('f').style.display='none';o.innerHTML='Password reset successfully. <a href="/">Open Lumora and log in.</a>';}catch(err){o.textContent=err.message;}}</script></body></html>`;
@@ -422,26 +453,14 @@ async function api(req, res) {
     if (!/^\d{6}$/.test(code)) return send(res, 400, { error: 'Please enter the 6-digit verification code.' });
     const d = db();
     const v = d.emailVerifications.find(x => x.userId === u.id && x.expiresAt > Date.now());
-    if (!v || v.code !== code) return send(res, 400, { error: 'That verification code is invalid or expired.' });
+    const codeMatches = v && (v.code === code || v.codeHash === hashResetToken(code));
+    if (!v || !codeMatches) return send(res, 400, { error: 'That verification code is invalid or expired.' });
     u.emailVerified = true;
     d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
     save(d);
     return send(res, 200, { ok: true, user: safeUser(u) });
   }
 
-  if (req.method === 'GET' && (p === '/verify-email' || p === '/api/verify-email')) {
-    const token = url.searchParams.get('token');
-    const d = db();
-    const v = d.emailVerifications.find(x => x.token === token && x.expiresAt > Date.now());
-    const page = (title, message, ok = false) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title} • Lumora</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbf7fb;color:#3d3140;font-family:Georgia,'Times New Roman',serif}.box{width:min(560px,calc(100% - 40px));box-sizing:border-box;padding:38px;border:1px solid #eadfea;border-radius:24px;background:white;box-shadow:0 16px 50px rgba(80,55,85,.10);text-align:center}h1{margin:0 0 14px;font-size:34px}.icon{font-size:42px;margin-bottom:12px}p{line-height:1.7;color:#6e6270}.btn{display:inline-block;margin-top:12px;padding:12px 18px;border-radius:12px;background:#9b4f79;color:#fff;text-decoration:none}.ok{color:#7d4163}</style></head><body><main class="box"><div class="icon">${ok?'✓':'✉'}</div><h1>${title}</h1><p>${message}</p><a class="btn" href="/">Open Lumora</a></main></body></html>`;
-    if (!v) return send(res, 400, page('Verification link expired', 'This verification link is invalid or has expired. Please return to Lumora and request a new verification email.'));
-    const u = d.users.find(x => x.id === v.userId);
-    if (!u) return send(res, 404, page('Account not found', 'We could not find the Lumora account connected to this verification link.'));
-    u.emailVerified = true;
-    d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
-    save(d);
-    return send(res, 200, page('Email verified ✓', 'Your Lumora email has been verified successfully. You can now open Lumora and log in.', true));
-  }
 
   if (req.method === 'POST' && p === '/api/signup') {
     const x = await body(req);
@@ -854,6 +873,7 @@ async function startServer() {
     try {
       if(req.url.startsWith('/api/')) return await api(req,res);
       const pageUrl = new URL(req.url,`http://${req.headers.host}`);
+      if(pageUrl.pathname === '/verify-email') return handleEmailVerificationLink(req, res, pageUrl);
       if(pageUrl.pathname === '/reset-password') { res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); return res.end(passwordResetPage(pageUrl.searchParams.get('token') || '')); }
       const pathname=decodeURIComponent(pageUrl.pathname);
       const file=pathname==='/'?path.join(PUBLIC,'index.html'):path.join(PUBLIC,pathname);
