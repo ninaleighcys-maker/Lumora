@@ -601,7 +601,7 @@ async function api(req, res) {
       diaries: d.diaries.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt),
       posts: d.posts.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.createdAt-a.createdAt).map(p => publicPost(p,d,u.id)),
       archivedPosts: d.posts.filter(x => x.userId === u.id && x.archivedAt && !x.deletedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d)),
-      libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
+      libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
       continueReading: d.readingProgress.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id), chapterId:x.chapterId, pageNumber:x.pageNumber, progressUpdatedAt:x.updatedAt} : null; }).filter(Boolean).sort((a,b)=>(b.progressUpdatedAt||0)-(a.progressUpdatedAt||0)),
       favorites: d.favorites.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id), favorited:true, favoritedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>(b.favoritedAt||0)-(a.favoritedAt||0)),
       social: socialSummary(d,u)
