@@ -145,9 +145,9 @@
 @media(max-width:900px){.profile-tab-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:650px){.profile-tabs{margin:16px 0 14px} .profile-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}.profile-tab-item{height:40px}.profile-tab{width:52px;height:40px;font-size:18px}.profile-tab-divider{font-size:17px}.profile-tab-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.archive-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
 @media(max-width:430px){.profile-tab-grid,.archive-grid{grid-template-columns:1fr}}
-.section-top-home{position:fixed;right:24px;bottom:22px;z-index:1000;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:94px;height:44px;padding:0 16px;border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--card) 94%,transparent);color:var(--text);font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.14);backdrop-filter:blur(14px)}
+.section-top-home{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:1000;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-width:94px;height:44px;padding:0 16px;border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--card) 94%,transparent);color:var(--text);font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.14);backdrop-filter:blur(14px)}
 .section-top-home:hover{background:var(--soft)}
-@media(max-width:650px){.section-top-home{right:14px;bottom:14px;min-width:86px;height:42px}}
+@media(max-width:650px){.section-top-home{bottom:14px;min-width:86px;height:42px}}
 </style></head><body><div id="app"></div><script>
 const app=document.getElementById('app');let me=null;let state={view:'news',data:null,book:null,chapter:null,chapterData:null,search:null,profile:null,highlightVisible:false,messageData:null,messageNotice:'',notificationCount:0,libraryBooks:[],navReady:false};let readerSaveTimer=null;let lastReaderScroll=0;
 const GENRES=['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
