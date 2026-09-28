@@ -406,7 +406,7 @@ function profileCard(u,own=false,relationship={}){
 function profileTabs(active,publicMode){
   const items=[['books','📚','Books'],['diary','📔','Diary'],['thoughts','💭','Thoughts'],['reposts','🔁','Reposts']];
   const fn=publicMode?'selectPublicProfileTab':'selectProfileTab';
-  return `<nav class="profile-tabs" role="tablist" aria-label="Profile content tabs">${items.map((x,i)=><span class="profile-tab-item"><button type="button" class="profile-tab ${active===x[0]?'active':''}" role="tab" aria-selected="${active===x[0]}" aria-label="${x[2]}" onclick="${fn}('${x[0]}')"><span class="profile-tab-icon">${x[1]}</span></button>${i<items.length-1?'<span class="profile-tab-divider" aria-hidden="true">|</span>':''}</span>).join('')}</nav>`;
+  return '<nav class="profile-tabs" role="tablist" aria-label="Profile content tabs">'+items.map((x,i)=>'<span class="profile-tab-item"><button type="button" class="profile-tab '+(active===x[0]?'active':'')+'" role="tab" aria-selected="'+(active===x[0])+'" aria-label="'+x[2]+'" onclick="'+fn+"('"+x[0]+"')"+'"><span class="profile-tab-icon">'+x[1]+'</span></button>'+(i<items.length-1?'<span class="profile-tab-divider" aria-hidden="true">|</span>':'')+'</span>').join('')+'</nav>';
 }
 function profileBookCard(b){
   const stats=b.stats||{};
