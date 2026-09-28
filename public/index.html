@@ -121,22 +121,24 @@
 @media(max-width:700px){.profile-cover{min-height:270px}.profile-cover .profile-head{gap:12px;padding:16px}.profile-cover .profile-head .profile-bio{margin-top:7px}.crop-stage-wrap{min-height:240px}.crop-controls{flex-wrap:wrap}}
 .profile-favorites{margin-bottom:18px!important}.profile-archive{margin-top:0!important}
 /* Compact profile tabs and vertical profile grids */
-.profile-tabs{display:flex;justify-content:center;align-items:center;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:22px 0 18px}
-.profile-tab{min-width:78px;padding:12px 18px!important;border:0!important;border-radius:0!important;background:transparent!important;color:var(--muted);box-shadow:none!important;transform:none!important;font-size:20px;line-height:1}
+.profile-tabs{display:flex;justify-content:center;align-items:center;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:20px 0 18px}
+.profile-tab{min-width:78px;padding:12px 18px!important;border:0!important;border-radius:0!important;background:transparent!important;color:var(--muted);box-shadow:none!important;transform:none!important;font-size:20px;line-height:1;cursor:pointer}
 .profile-tab:hover{background:var(--accent3)!important;color:var(--text)}
 .profile-tab.active{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)!important}
-.profile-tab-content{margin-bottom:18px}.profile-tab-section{margin:0 0 14px!important}
-.profile-tab-section .home-section-head{margin-bottom:12px}.profile-tab-section .home-section-head h2,.profile-tab-section .home-section-head>div>p{display:none}
+.profile-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.profile-tab-content{margin:0 0 18px}.profile-tab-section{margin:0 0 12px!important}
+.profile-tab-section .home-section-head{margin-bottom:12px;min-height:0}.profile-tab-section .home-section-head h2,.profile-tab-section .home-section-head>div>p{display:none}
+.profile-tab-section .home-section-head>div:empty{display:none}
 .profile-tab-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px;align-items:stretch}
 .profile-tab-grid>.card{min-width:0;height:100%}.profile-tab-grid .empty{grid-column:1/-1}
-.profile-tab-grid .grid{display:grid;grid-template-columns:inherit;gap:inherit}
-.profile-tabs+.profile-tab-content .result-section{margin:0 0 14px}.profile-tabs+.profile-tab-content .result-section>h2{display:none}.profile-tabs+.profile-tab-content .result-section>.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px}
-.profile-favorites{margin-bottom:12px!important}.profile-archive{margin-top:0!important}
-.archive-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;padding:4px 2px 12px}
-@media(max-width:1100px){.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-@media(max-width:900px){.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid{grid-template-columns:repeat(3,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:650px){.profile-tabs{margin:18px 0 14px}.profile-tab{min-width:62px;padding:11px 13px!important;font-size:18px}.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.archive-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
-@media(max-width:430px){.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid,.archive-grid{grid-template-columns:1fr}}
+.profile-favorites{margin-top:8px!important;margin-bottom:12px!important}.profile-archive{margin-top:0!important}
+.archive-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;padding:4px 2px 10px}
+.archive-grid .own-content-card{min-width:0}.archive-grid .empty{grid-column:1/-1}
+.profile-private-section{margin-top:18px!important}
+@media(max-width:1100px){.profile-tab-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:900px){.profile-tab-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.profile-tabs{margin:16px 0 14px}.profile-tab{min-width:62px;padding:11px 13px!important;font-size:18px}.profile-tab-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.archive-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
+@media(max-width:430px){.profile-tab-grid,.archive-grid{grid-template-columns:1fr}}
 </style></head><body><div id="app"></div><script>
 const app=document.getElementById('app');let me=null;let state={view:'news',data:null,book:null,chapter:null,chapterData:null,search:null,profile:null,highlightVisible:false,messageData:null,messageNotice:'',notificationCount:0,libraryBooks:[]};let readerSaveTimer=null;let lastReaderScroll=0;
 const GENRES=['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
@@ -384,7 +386,7 @@ async function openDiary(id){try{state.diaryData=await api('/api/diaries/'+id);s
 async function doSearch(q){q=String(q||'').trim();if(!q)return;try{state.search={q,...await api('/api/search?q='+encodeURIComponent(q))};state.view='search';render();const input=document.getElementById('globalSearch');if(input)input.value=''}catch(e){alert(e.message)}}
 function searchPage(){const x=state.search||{q:'',books:[],people:[],diaries:[],posts:[]};return app.innerHTML=shell(`<section class="hero"><h1>Search</h1><p>Results for <b>“${esc(x.q)}”</b>. Only public content is included.</p></section>${resultSection('Books',x.books.map(publicBookCard).join(''),'No public books found.')} ${resultSection('People',x.people.map(u=>`<div class="card"><div class="row">${avatarMarkup(u)}<div><h3>${esc(u.name||u.username)}</h3><p class="muted">@${esc(u.username)}</p></div></div><p>${esc(u.bio||'')}</p><button onclick="openUser('${u.id}')">View Profile</button></div>`).join(''),'No people found.')} ${resultSection('Public Diaries',x.diaries.map(publicDiaryCard).join(''),'No public diaries found.')} ${resultSection('Public Posts',x.posts.map(p=>`<div class="card"><div class="meta"><span class="pill">✍️ Public Post</span><span class="muted">by @${esc(p.author.username)}</span></div><p class="post-body">${esc(p.content)}</p><button onclick="openPost('${p.id}')">Open</button></div>`).join(''),'No public posts found.')}`)}
 function resultSection(title,html,empty){return `<div class="result-section"><h2>${title}</h2><div class="grid">${html||`<div class="card empty muted">${empty}</div>`}</div></div>`}
-async function openUser(id){try{state.profile=await api('/api/users/'+id);state.view='user';render()}catch(e){alert(e.message)}}
+async function openUser(id){try{state.profile=await api('/api/users/'+id);state.userProfileTab='books';state.view='user';render()}catch(e){alert(e.message)}}
 function openImageLightbox(src){if(!src)return;const x=document.createElement('div');x.className='image-lightbox';x.setAttribute('role','dialog');x.setAttribute('aria-label','Larger image');x.onclick=()=>x.remove();x.innerHTML='<img src="'+attr(src)+'" alt="Larger image">';document.body.appendChild(x)}
 function avatarMarkup(u){return u.avatarUrl?'<img class="profile-avatar-img profile-clickable" src="'+attr(u.avatarUrl)+'" alt="'+attr(u.name||u.username||'Profile picture')+'" onclick="openImageLightbox(this.currentSrc||this.src);event.stopPropagation()">':'<div class="avatar profile-clickable" onclick="event.stopPropagation()">'+esc((u.name||u.username||'?')[0].toUpperCase())+'</div>'}
 function ownDiaryCard(x){return `<div class="card own-content-card"><div class="diary-meta"><span class="pill">${visibilityLabel(x.visibility)}</span><span class="muted small">${esc(x.date)} · ${new Date(x.updatedAt||x.createdAt).toLocaleString()}</span></div><h3>${esc(x.title||'Untitled Diary')}</h3>${x.mood?`<span class="pill">💭 ${esc(x.mood)}</span>`:''}${x.weather?` <span class="pill">${esc(x.weather)}</span>`:''}${x.season?` <span class="pill">🍃 ${esc(x.season)}</span>`:''}${x.imageUrl?`<img class="diary-photo" src="${attr(x.imageUrl)}" alt="Diary photo">`:''}<p class="diary-body">${esc(x.content||'')}</p><button class="secondary" onclick="openDiary('${x.id}')">Open</button> <button class="ghost" onclick="editDiary('${x.id}')">Edit</button> <button class="danger" onclick="moveToTrash('diaries','${x.id}')">Delete</button></div>`}
@@ -394,8 +396,58 @@ function profileCard(u,own=false,relationship={}){
   const actions=own?'<button onclick="editProfile()">✦ Edit Profile</button>':'<div class="social-actions">'+(relationship.following?'<button class="secondary" onclick="toggleFollow(\''+u.id+'\',true)">Following</button>':relationship.pendingFollow?'<button class="secondary" onclick="cancelFollowRequest(\''+u.id+'\')">Requested · Cancel</button>':'<button onclick="toggleFollow(\''+u.id+'\',false)">Follow</button>')+(relationship.friends?'<button class="secondary">Friends ✓</button>':'')+'<button class="secondary" onclick="openMessage(\''+u.id+'\')">💌 Message</button></div>';
   return cover+'<div class="profile-head">'+avatarMarkup(u)+'<div style="flex:1"><h1>'+esc(u.name||u.username)+'</h1><p class="muted">@'+esc(u.username)+'</p><p class="profile-bio">'+esc(u.bio||'')+'</p>'+(u.favoriteQuote?'<p class="quote">“'+esc(u.favoriteQuote)+'”</p>':'')+(u.accountPrivacy==='private'&&!own?'<div class="profile-privacy-note">🔒 This account is private. Follow them or become friends to see more.</div>':'')+'</div>'+actions+'</div></div>';
 }
-function userPage(){const x=state.profile;return app.innerHTML=shell(`${profileCard(x.user,false,x.relationship||{})}<div class="social-stats section"><div class="social-stat"><b>${x.counts?.followers||0}</b><span class="muted">Followers</span></div><div class="social-stat"><b>${x.counts?.following||0}</b><span class="muted">Following</span></div><div class="social-stat"><b>${x.counts?.friends||0}</b><span class="muted">Friends</span></div></div>${x.user.accountPrivacy==='private'&&!(x.relationship?.following||x.relationship?.friends)?'<div class="card empty muted">This profile is private.</div>':`${resultSection('Books',x.books.map(publicBookCard).join(''),'No visible public books yet.')} ${resultSection('Diaries',x.diaries.map(publicDiaryCard).join(''),'No diaries available to you.')} ${resultSection('Posts',x.posts.map(p=>`<div class="card"><div class="meta"><span class="pill">✍️ ${visibilityLabel(p.visibility)}</span></div><p class="post-body">${esc(p.content)}</p><button onclick="openPost('${p.id}')">Open</button></div>`).join(''),'No posts available to you.')}`}`)}
-async function profile(){try{state.data=await api('/api/dashboard')}catch(e){alert(e.message);return}const s=state.data.social||{followers:0,following:0,friends:0};const diaries=state.data.diaries||[];const posts=state.data.posts||[];const books=state.data.books||[];return app.innerHTML=shell(`${profileCard(me,true)}<div class="social-stats section"><div class="social-stat" onclick="openSocial('followers')"><b>${s.followers}</b><span class="muted">Followers</span></div><div class="social-stat" onclick="openSocial('following')"><b>${s.following}</b><span class="muted">Following</span></div><div class="social-stat" onclick="openSocial('friends')"><b>${s.friends}</b><span class="muted">Friends</span></div></div><section class="section profile-content"><div class="home-section-head"><div><h2>📔 My Diaries</h2><p class="muted">Your diary entries, including private ones.</p></div><button class="secondary" onclick="newDiary()">Write in Diary</button></div><div class="profile-grid">${diaries.map(ownDiaryCard).join('')||'<div class="card empty muted">Your diary is still waiting for its first entry.</div>'}</div></section><section class="section profile-content"><div class="home-section-head"><div><h2>💭 My Shared Thoughts</h2><p class="muted">Fresh thoughts stay here while they are active.</p></div><button class="secondary" onclick="newPost()">Share a Thought</button></div><div class="profile-grid">${posts.map(ownPostCard).join('')||'<div class="card empty muted">You have no active shared thoughts.</div>'}</div></section><section class="section profile-content profile-favorites"><div class="home-section-head"><div><h2>♡ My Favorites</h2><p class="muted">Books you've saved as favorites.</p></div></div><div class="profile-grid">${(state.data.favorites||[]).map(b=>{const st=b.stats||{};return '<div class="card book"><div class="book-cover" onclick="openBookDetail(\''+attr(b.id)+'\')">'+(b.cover?'<img src="'+attr(b.cover)+'" alt="'+attr(b.title)+' cover">':'<div class="book-cover-placeholder">'+esc(b.title)+'</div>')+'</div><div class="meta"><span class="pill">'+esc(b.genre||'Book')+'</span><span class="muted small">by <span class="link" onclick="openUser(\''+attr(b.author.id)+'\')">@'+esc(b.author.username)+'</span></span></div><h3 class="book-title-link" onclick="openBookDetail(\''+attr(b.id)+'\')">'+esc(b.title)+'</h3><p>'+esc(shortDescription(b.description,35))+'</p><p class="muted small book-stats">📖 '+(st.reads||0)+' Reads · ♥ '+(st.favorites||0)+' Favorites</p><div class="row"><button onclick="openBookDetail(\''+attr(b.id)+'\')">View Book</button><button class="secondary" onclick="toggleFavorite(\''+attr(b.id)+'\',true)">♥ Remove from Favorites</button></div></div>'}).join('')||'<div class="card empty muted">You have not added any books to your favorites yet.</div>'}</div></section><section class="section profile-content profile-archive"><div class="home-section-head"><div><h2>🗂 Archive Thoughts</h2><p class="muted">Thoughts that moved out of the 24-hour feed.</p></div></div><div class="archive-grid">${(state.data.archivedPosts||[]).map(ownPostCard).join('')||'<div class="card empty muted">Your archive is empty.</div>'}</div></section><section class="section profile-content"><div class="home-section-head"><div><h2>↻ My Reposts</h2><p class="muted">Public thoughts you have reposted.</p></div></div><div class="profile-grid">${(state.data.reposts||[]).map(r=>`<div class="card own-content-card"><p class="muted small">↻ Reposted from @${esc(r.post?.author?.username||'user')}</p><p class="post-body">${esc(r.post?.content||'')}</p><button class="secondary" onclick="openPost('${r.post?.id||''}')">Open</button></div>`).join('')||'<div class="card empty muted">You have not reposted anything yet.</div>'}</div></section><section class="section profile-content"><div class="home-section-head"><div><h2>📚 My Books / Stories</h2><p class="muted">Stories you've created on Lumora.</p></div><button class="secondary" onclick="newBook()">Write a Book</button></div><div class="profile-grid">${books.map(b=>`<div class="card"><div class="book-cover">${b.cover?`<img src="${attr(b.cover)}" alt="${attr(b.title)} cover">`:`<div class="book-cover-placeholder">${esc(b.title)}</div>`}</div><div class="meta"><span class="pill">${b.visibility==='public'?'🌎 Public':'🔒 Only Me'}</span></div><h3>${esc(b.title)}</h3><p>${esc(b.description||'')}</p><button onclick="readBook('${b.id}')">Read</button></div>`).join('')||'<div class="card empty muted">You have not created a book yet.</div>'}</div></section><section class="section profile-content"><div class="home-section-head"><div><h2>♡ My Favorites</h2><p class="muted">Books you've saved as favorites.</p></div></div><div class="profile-grid">${(state.data.favorites||[]).map(b=>{const st=b.stats||{};return '<div class="card book"><div class="book-cover" onclick="openBookDetail(\''+attr(b.id)+'\')">'+(b.cover?'<img src="'+attr(b.cover)+'" alt="'+attr(b.title)+' cover">':'<div class="book-cover-placeholder">'+esc(b.title)+'</div>')+'</div><div class="meta"><span class="pill">'+esc(b.genre||'Book')+'</span><span class="muted small">by <span class="link" onclick="openUser(\''+attr(b.author.id)+'\')">@'+esc(b.author.username)+'</span></span></div><h3 class="book-title-link" onclick="openBookDetail(\''+attr(b.id)+'\')">'+esc(b.title)+'</h3><p>'+esc(shortDescription(b.description,35))+'</p><p class="muted small book-stats">📖 '+(st.reads||0)+' Reads · ♥ '+(st.favorites||0)+' Favorites</p><div class="row"><button onclick="openBookDetail(\''+attr(b.id)+'\')">View Book</button><button class="secondary" onclick="toggleFavorite(\''+attr(b.id)+'\',true)">♥ Remove from Favorites</button></div></div>'}).join('')||'<div class="card empty muted">You have not added any books to your favorites yet.</div>'}</div></section><section class="hero profile-footer-note"><h2>Your little corner of Lumora ✦</h2><p>Share the stories you want the world to read, and keep the rest just for you.</p></section>`) }
+
+function profileTabs(active,publicMode){
+  const items=[['books','📚','Books'],['diary','📔','Diary'],['thoughts','💭','Thoughts'],['reposts','🔁','Reposts']];
+  return '<nav class="profile-tabs" role="tablist" aria-label="Profile content tabs">'+items.map(x=>'<button type="button" class="profile-tab '+(active===x[0]?'active':'')+'" role="tab" aria-selected="'+(active===x[0])+'" aria-label="'+x[2]+'" onclick="'+(publicMode?'selectPublicProfileTab':'selectProfileTab')+'(\\''+x[0]+'\\')">'+x[1]+'</button>').join('')+'</nav>';
+}
+function profileBookCard(b,own=false){
+  const stats=b.stats||{};
+  return '<div class="card book"><div class="book-cover" onclick="openBookDetail(\\''+attr(b.id)+'\\')">'+(b.cover?'<img loading="lazy" decoding="async" src="'+attr(b.cover)+'" alt="'+attr(b.title)+' cover">':'<div class="book-cover-placeholder">'+esc(b.title)+'</div>')+'</div><div class="meta"><span class="pill">'+(b.visibility==='public'?'🌎 Public':'🔒 Only Me')+'</span>'+(b.author?'<span class="muted small">by <span class="link" onclick="openUser(\\''+attr(b.author.id)+'\\')">@'+esc(b.author.username)+'</span></span>':'')+'</div><h3>'+esc(b.title||'Untitled book')+'</h3><p>'+esc(shortDescription(b.description||'',35))+'</p><p class="muted small">📖 '+(stats.reads||0)+' Reads · ♥ '+(stats.favorites||0)+' Favorites</p><button onclick="openBookDetail(\\''+attr(b.id)+'\\')">View Book</button></div>';
+}
+function ownTabMarkup(tab,d){
+  if(tab==='books'){
+    const books=d.books||[];
+    return '<div class="profile-tab-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="secondary" onclick="newBook()">Write a Book</button></div><div class="profile-tab-grid">'+(books.map(b=>profileBookCard({...b,author:{id:me.id,username:me.username}},true).replace('alt="'+attr(b.title)+' cover"','alt="'+attr(b.title)+' cover"')).join('')||'<div class="card empty muted">No entry yet</div>')+'</div>';
+  }
+  if(tab==='diary'){
+    const items=d.diaries||[];
+    return '<div class="profile-tab-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="secondary" onclick="newDiary()">Write in Diary</button></div><div class="profile-tab-grid">'+(items.map(ownDiaryCard).join('')||'<div class="card empty muted">No entry yet</div>')+'</div>';
+  }
+  if(tab==='thoughts'){
+    const items=d.posts||[];
+    return '<div class="profile-tab-toolbar" style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="secondary" onclick="newPost()">Share a Thought</button></div><div class="profile-tab-grid">'+(items.map(ownPostCard).join('')||'<div class="card empty muted">No entry yet</div>')+'</div>';
+  }
+  const reposts=d.reposts||[];
+  return '<div class="profile-tab-grid">'+(reposts.map(r=>'<div class="card own-content-card"><p class="muted small">↻ Reposted from @'+esc(r.post?.author?.username||'user')+'</p><p class="post-body">'+esc(r.post?.content||'')+'</p><button class="secondary" onclick="openPost(\\''+attr(r.post?.id||'')+'\\')">Open</button></div>').join('')||'<div class="card empty muted">No repost yet</div>')+'</div>';
+}
+function publicTabMarkup(tab,x){
+  if(tab==='books')return '<div class="profile-tab-grid">'+((x.books||[]).map(publicBookCard).join('')||'<div class="card empty muted">No entry yet</div>')+'</div>';
+  if(tab==='diary')return '<div class="profile-tab-grid">'+((x.diaries||[]).map(publicDiaryCard).join('')||'<div class="card empty muted">No entry yet</div>')+'</div>';
+  if(tab==='thoughts')return '<div class="profile-tab-grid">'+((x.posts||[]).map(p=>'<div class="card own-content-card"><div class="meta"><span class="pill">✍️ '+visibilityLabel(p.visibility)+'</span></div><p class="post-body">'+esc(p.content||'')+'</p><div class="post-actions"><button onclick="togglePostLike(\\''+attr(p.id)+'\\','+!!p.liked+',\\'post\\')">'+(p.liked?'♥ Liked':'♡ Like')+' · '+Number(p.likesCount||0)+'</button><button class="secondary" onclick="openPost(\\''+attr(p.id)+'\\')">Open</button></div></div>').join('')||'<div class="card empty muted">No entry yet</div>')+'</div>';
+  return '<div class="profile-tab-grid">'+((x.reposts||[]).map(r=>'<div class="card own-content-card"><p class="muted small">↻ Reposted from @'+esc(r.post?.author?.username||'user')+'</p><p class="post-body">'+esc(r.post?.content||'')+'</p><button class="secondary" onclick="openPost(\\''+attr(r.post?.id||'')+'\\')">Open</button></div>').join('')||'<div class="card empty muted">No repost yet</div>')+'</div>';
+}
+function selectProfileTab(tab){
+  const valid=['books','diary','thoughts','reposts'];if(!valid.includes(tab))tab='books';state.profileTab=tab;
+  document.querySelectorAll('.profile-tabs .profile-tab').forEach(b=>{const active=b.getAttribute('aria-label').toLowerCase()===({books:'books',diary:'diary',thoughts:'thoughts',reposts:'reposts'}[tab]);b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
+  const host=document.getElementById('profileTabContent');if(host)host.innerHTML=ownTabMarkup(tab,state.data||{});
+}
+function selectPublicProfileTab(tab){
+  const valid=['books','diary','thoughts','reposts'];if(!valid.includes(tab))tab='books';state.userProfileTab=tab;
+  document.querySelectorAll('.profile-tabs .profile-tab').forEach(b=>{const active=b.getAttribute('aria-label').toLowerCase()===({books:'books',diary:'diary',thoughts:'thoughts',reposts:'reposts'}[tab]);b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active))});
+  const host=document.getElementById('publicProfileTabContent');if(host)host.innerHTML=publicTabMarkup(tab,state.profile||{});
+}
+function userPage(){
+  const x=state.profile;if(!x)return app.innerHTML=shell('<div class="card empty muted">No entry yet</div>');
+  const blocked=x.user.accountPrivacy==='private'&&!(x.relationship?.following||x.relationship?.friends);
+  const tab=state.userProfileTab||'books';
+  return app.innerHTML=shell(profileCard(x.user,false,x.relationship||{})+'<div class="social-stats section"><div class="social-stat"><b>'+(x.counts?.followers||0)+'</b><span class="muted">Followers</span></div><div class="social-stat"><b>'+(x.counts?.following||0)+'</b><span class="muted">Following</span></div><div class="social-stat"><b>'+(x.counts?.friends||0)+'</b><span class="muted">Friends</span></div></div>'+(blocked?'<div class="card empty muted">This profile is private.</div>':profileTabs(tab,true)+'<section id="publicProfileTabContent" class="profile-tab-content">'+publicTabMarkup(tab,x)+'</section>'));
+}
+async function profile(){
+  try{if(!state.data?.books)state.data=await api('/api/dashboard')}catch(e){alert(e.message);return}
+  const d=state.data||{},s=d.social||{followers:0,following:0,friends:0},tab=state.profileTab||'books';
+  return app.innerHTML=shell(profileCard(me,true)+'<div class="social-stats section"><div class="social-stat" onclick="openSocial(\\'followers\\')"><b>'+s.followers+'</b><span class="muted">Followers</span></div><div class="social-stat" onclick="openSocial(\\'following\\')"><b>'+s.following+'</b><span class="muted">Following</span></div><div class="social-stat" onclick="openSocial(\\'friends\\')"><b>'+s.friends+'</b><span class="muted">Friends</span></div></div>'+profileTabs(tab,false)+'<section id="profileTabContent" class="profile-tab-content">'+ownTabMarkup(tab,d)+'</section><section class="section profile-content profile-favorites"><div class="home-section-head"><div><h2>♡ My Favorites</h2><p class="muted">Books you have saved as favorites.</p></div></div><div class="profile-grid">'+(d.favorites||[]).map(b=>'<div class="card book"><div class="book-cover" onclick="openBookDetail(\\''+attr(b.id)+'\\')">'+(b.cover?'<img loading="lazy" decoding="async" src="'+attr(b.cover)+'" alt="'+attr(b.title)+' cover">':'<div class="book-cover-placeholder">'+esc(b.title)+'</div>')+'</div><div class="meta"><span class="pill">'+esc(b.genre||'Book')+'</span><span class="muted small">by <span class="link" onclick="openUser(\\''+attr(b.author.id)+'\\')">@'+esc(b.author.username)+'</span></span></div><h3>'+esc(b.title)+'</h3><p>'+esc(shortDescription(b.description,35))+'</p><p class="muted small book-stats">📖 '+(b.stats?.reads||0)+' Reads · ♥ '+(b.stats?.favorites||0)+' Favorites</p><div class="row"><button onclick="openBookDetail(\\''+attr(b.id)+'\\')">View Book</button><button class="secondary" onclick="toggleFavorite(\\''+attr(b.id)+'\\',true)">♥ Remove from Favorites</button></div></div>').join('')||'<div class="card empty muted">You have not added any books to your favorites yet.</div>'}</div></section><section class="section profile-content profile-archive"><div class="home-section-head"><div><h2>🗂 Archive Thoughts</h2><p class="muted">Thoughts that moved out of the 24-hour feed.</p></div></div><div class="archive-grid">'+(d.archivedPosts||[]).map(ownPostCard).join('')||'<div class="card empty muted">Your archive is empty.</div>'+'</div></section><section class="hero profile-footer-note"><h2>Your little corner of Lumora ✦</h2><p>Share the stories you want the world to read, and keep the rest just for you.</p></section>');
+}
 async function moveToTrash(type,id){if(!confirm('Move this item to Trash? You can restore it within 30 days.'))return;try{await api('/api/'+type+'/'+id,{method:'DELETE'});await dashboard();}catch(e){alert(e.message)}}
 async function trashPage(){try{const x=await api('/api/trash');app.innerHTML=shell(`<section class="hero"><h1>🗑 Trash</h1><p>Deleted diaries, thoughts, and books stay here for 30 days before permanent deletion.</p></section><div class="card">${x.items.map(i=>`<div class="trash-item"><div class="trash-meta"><div class="trash-title">${esc(i.title)}</div><div class="muted small">${esc(i.type)} · deleted ${new Date(i.deletedAt).toLocaleString()} · permanently deleted ${new Date(i.deletedUntil).toLocaleDateString()}</div></div><div class="row"><button onclick="restoreTrash('${i.type}','${i.id}')">Restore</button><button class="danger" onclick="deleteTrashForever('${i.type}','${i.id}')">Delete Forever</button></div></div>`).join('')||'<div class="empty muted">Trash is empty.</div>'}</div>`)}catch(e){alert(e.message)}}
 async function restoreTrash(type,id){try{await api('/api/trash/'+type+'/'+id+'/restore',{method:'POST'});await trashPage()}catch(e){alert(e.message)}}
@@ -441,168 +493,5 @@ function esc(s=''){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;'
 function attr(s=''){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/'/g,'&#39;')}
 start().catch(e=>{console.error(e);auth()});
 </script>
-<script>
-(function(){
-  const originalProfile=window.profile;
-  const originalUserPage=window.userPage;
-  const tabDefs=[["books","📚","Books"],["diary","📔","Diary"],["thoughts","💭","Thoughts"],["reposts","🔁","Reposts"]];
 
-  function makeTabs(active, publicMode){
-    const wrap=document.createElement("div");
-    wrap.className="profile-tabs";
-    wrap.setAttribute("role","tablist");
-    wrap.setAttribute("aria-label","Profile content");
-    tabDefs.forEach(function(t){
-      const b=document.createElement("button");
-      b.className="profile-tab"+(active===t[0]?" active":"");
-      b.type="button";b.setAttribute("role","tab");b.setAttribute("aria-label",t[2]);b.setAttribute("aria-selected",String(active===t[0]));
-      b.textContent=t[1];
-      b.onclick=function(){if(publicMode)selectPublicTab(t[0]);else selectOwnTab(t[0]);};
-      wrap.appendChild(b);
-    });
-    return wrap;
-  }
-
-  function findOwnSections(){
-    const out={};
-    document.querySelectorAll("section.profile-content").forEach(function(sec){
-      const text=(sec.querySelector("h2")?.textContent||"").toLowerCase();
-      if(text.includes("my books"))out.books=sec;
-      else if(text.includes("my diaries"))out.diary=sec;
-      else if(text.includes("my shared thoughts"))out.thoughts=sec;
-      else if(text.includes("my reposts"))out.reposts=sec;
-      else if(text.includes("my favorites"))out.favorites=sec;
-      else if(text.includes("archive thoughts"))out.archive=sec;
-    });
-    return out;
-  }
-
-  function compactSection(sec){
-    if(!sec)return;
-    sec.classList.add("profile-tab-section");
-    const h=sec.querySelector("h2");if(h)h.style.display="none";
-    const desc=h&&h.parentElement?h.parentElement.querySelector("p"):null;if(desc)desc.style.display="none";
-    sec.querySelectorAll(".empty").forEach(function(e){e.textContent="No entry yet";});
-    const grid=sec.querySelector(".profile-grid");if(grid)grid.classList.add("profile-tab-grid");
-  }
-
-  function prepareOwnTabs(){
-    const map=findOwnSections(); if(!map.books)return;
-    Object.keys(map).forEach(function(k){if(["books","diary","thoughts","reposts"].includes(k))compactSection(map[k]);});
-    const anchor=map.books;
-    const parent=anchor.parentElement;
-    const content=document.createElement("section");
-    content.id="profileTabContent";content.className="profile-tab-content";
-    [map.books,map.diary,map.thoughts,map.reposts].forEach(function(sec){if(sec)content.appendChild(sec);});
-    const tabs=makeTabs(state.profileTab||"books",false);
-    parent.insertBefore(tabs,content.parentNode===parent?anchor:tabs);
-    parent.insertBefore(content,anchor);
-    if(map.favorites&&map.archive){
-      if(map.favorites.parentElement===parent&&map.archive.parentElement===parent){
-        parent.insertBefore(map.favorites,map.archive);
-        map.favorites.classList.add("profile-favorites");
-        map.archive.classList.add("profile-archive");
-      }
-    }
-    showOwnTab(state.profileTab||"books",content);
-  }
-
-  function showOwnTab(tab,content){
-    const sections={};
-    content.querySelectorAll(".profile-tab-section").forEach(function(sec){
-      const text=(sec.querySelector(".home-section-head")?.textContent||"").toLowerCase();
-      if(sec.querySelector(".book-cover")||text.includes("write a book"))sections.books=sec;
-      if(text.includes("write in diary")||sec.querySelector(".diary-body"))sections.diary=sec;
-      if(text.includes("share a thought"))sections.thoughts=sec;
-      if(text.includes("reposts")||text.includes("public thoughts you have reposted"))sections.reposts=sec;
-    });
-    // Fallback by original order if text is hidden.
-    const arr=[...content.querySelectorAll(".profile-tab-section")];
-    if(!sections.books)sections.books=arr[0];
-    if(!sections.diary)sections.diary=arr[1];
-    if(!sections.thoughts)sections.thoughts=arr[2];
-    if(!sections.reposts)sections.reposts=arr[3];
-    Object.keys(sections).forEach(function(k){if(sections[k])sections[k].style.display=k===tab?"block":"none";});
-  }
-
-  window.selectOwnTab=function(tab){
-    if(!tabDefs.some(function(t){return t[0]===tab;}))tab="books";
-    state.profileTab=tab;
-    const tabs=document.querySelectorAll(".profile-tabs .profile-tab");
-    tabs.forEach(function(b){const active=b.getAttribute("aria-label").toLowerCase()===(tab==="diary"?"diary":tab==="thoughts"?"thoughts":tab==="reposts"?"reposts":"books");b.classList.toggle("active",active);b.setAttribute("aria-selected",String(active));});
-    const c=document.getElementById("profileTabContent");if(c)showOwnTab(tab,c);
-  };
-
-  function findPublicSections(){
-    const out={};
-    document.querySelectorAll(".result-section").forEach(function(sec){
-      const text=(sec.querySelector("h2")?.textContent||"").toLowerCase();
-      if(text==="books")out.books=sec;
-      else if(text==="diaries")out.diary=sec;
-      else if(text==="posts")out.thoughts=sec;
-      else if(text==="reposts")out.reposts=sec;
-    });
-    return out;
-  }
-
-  function preparePublicTabs(){
-    const x=state.profile;if(!x||!x.user)return;
-    const blocked=x.user.accountPrivacy==="private"&&!(x.relationship?.following||x.relationship?.friends);
-    if(blocked)return;
-    const map=findPublicSections();
-    if(!map.books)return;
-    Object.values(map).forEach(function(sec){if(sec){const g=sec.querySelector(".grid");if(g)g.classList.add("profile-tab-grid");}});
-    if(!map.reposts&&Array.isArray(x.reposts)){
-      const sec=document.createElement("div");sec.className="result-section";
-      const grid=document.createElement("div");grid.className="grid profile-tab-grid";
-      sec.innerHTML="<h2>Reposts</h2>";sec.appendChild(grid);
-      (x.reposts||[]).forEach(function(r){
-        const p=r.post;if(!p)return;
-        const card=document.createElement("div");card.className="card own-content-card";
-        card.innerHTML='<p class="muted small">↻ Reposted from @'+esc(p.author?.username||"user")+'</p><p class="post-body">'+esc(p.content||"")+'</p><button class="secondary" onclick="openPost(\''+attr(p.id)+'\')">Open</button>';
-        grid.appendChild(card);
-      });
-      map.books.parentElement.appendChild(sec);map.reposts=sec;
-    }
-    Object.values(map).forEach(function(sec){if(sec){const h=sec.querySelector("h2");if(h)h.style.display="none";sec.style.margin="0 0 14px";sec.querySelectorAll(".empty").forEach(function(e){e.textContent="No entry yet";});}});
-    const parent=map.books.parentElement;
-    const anchor=map.books;
-    const content=document.createElement("section");content.id="publicProfileTabContent";content.className="profile-tab-content";
-    [map.books,map.diary,map.thoughts,map.reposts].forEach(function(sec){if(sec)content.appendChild(sec);});
-    parent.insertBefore(makeTabs(state.userProfileTab||"books",true),anchor);
-    parent.insertBefore(content,anchor);
-    showPublicTab(state.userProfileTab||"books",content);
-  }
-
-  function showPublicTab(tab,content){
-    [...content.querySelectorAll(".result-section")].forEach(function(sec){sec.style.display="none";});
-    const order=[...content.querySelectorAll(".result-section")];
-    const idx={books:0,diary:1,thoughts:2,reposts:3}[tab]??0;
-    if(order[idx])order[idx].style.display="block";
-  }
-
-  window.selectPublicTab=function(tab){
-    if(!tabDefs.some(function(t){return t[0]===tab;}))tab="books";
-    state.userProfileTab=tab;
-    document.querySelectorAll(".profile-tabs .profile-tab").forEach(function(b){b.classList.toggle("active",b.getAttribute("aria-label").toLowerCase()===(tab==="diary"?"diary":tab==="thoughts"?"thoughts":tab==="reposts"?"reposts":"books"));});
-    const c=document.getElementById("publicProfileTabContent");if(c)showPublicTab(tab,c);
-  };
-
-  window.profile=async function(){
-    const r=await originalProfile();
-    const old=state.profileTab||"books";state.profileTab=old;
-    prepareOwnTabs();
-    return r;
-  };
-
-  window.userPage=function(){
-    const r=originalUserPage();
-    if(r&&typeof r.then==="function")return r.then(function(){preparePublicTabs();return r;});
-    preparePublicTabs();return r;
-  };
-
-  // No tagged-content tab is created because the existing app has mentions but no distinct
-  // saved/tagged-content collection to safely expose as a profile tab.
-})();
-</script>
 </body></html>
