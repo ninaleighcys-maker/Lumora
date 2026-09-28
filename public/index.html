@@ -151,7 +151,20 @@ const GENRES=['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci
 const WEATHER=[['☀️','Sunny'],['🌧️','Rainy'],['⛅','Cloudy'],['🌩️','Stormy'],['🌫️','Foggy'],['❄️','Snowy'],['🌙','Clear Night'],['🌬️','Windy']];
 const SEASONS=['Spring','Summer','Autumn','Winter','Rainy Season','Dry Season'];
 const THEMES=[['Rose','#e88ab8','#f5d1e3','#fff8fc'],['Mint','#7EF7B4','#d9ffeb','#f5fff9'],['Aqua','#73E6DA','#d9faf6','#f4fffd'],['Lilac','#F095F0','#f7d8f7','#fff8ff'],['Blush','#FFCFE9','#ffe3f0','#fff8fc'],['Sage','#A8C9A0','#e1f0dc','#f7fbf4'],['Sky','#9CC9E8','#dfeef8','#f7fbff'],['Peach','#F3B58B','#fbe4d5','#fffaf6'],['Butter','#E7C96B','#f7edc5','#fffdf4'],['Periwinkle','#A8B5E8','#e5e9fb','#fafbff'],['Lavender Mist','#C7B7E8','#ebe4f8','#faf8ff'],['Sea Glass','#91CFC1','#dff1ec','#f6fcfa'],['Apricot','#E8A77B','#f7dfcf','#fffaf5'],['Dusty Blue','#8FAFC4','#dfeaf0','#f7fbfd'],['Mauve','#B993A8','#eadce4','#fcf8fa'],['Twilight','#8D9BC4','#e2e6f4','#f8f9fd'],['Eucalyptus','#86B8A5','#dff0e9','#f6fcf9'],['Rosewood','#C68F9D','#f0dfe4','#fdf9fa'],['Cloud','#B8C4D6','#e9edf3','#fbfcfe'],['Honey','#D8B36A','#f5e8c9','#fffdf6'],['Midnight','#b98adf','#30253d','#241d30'],['Moonlit','#86b8e8','#25364b','#1b2a3d'],['Velvet','#d48ab1','#43263a','#301d2a'],['Forest Night','#82c39a','#274735','#1b3326'],['Ember','#e6a16f','#4a3024','#35231b'],['Ocean Deep','#72c9d5','#21404a','#17333d'],['Plum','#b995df','#3a2850','#2a1d3c'],['Graphite','#b6beca','#333840','#262a30']];
-async function api(url,opt={}){const r=await fetch(url,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(opt.headers||{})},...opt});const j=await r.json();if(!r.ok){const e=Error(j.error||'Request failed');e.code=j.code;throw e}return j}
+async function api(url,opt={}){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),Number(opt.timeoutMs||10000));
+  try{
+    const {timeoutMs,...fetchOpt}=opt;
+    const r=await fetch(url,{credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json',...(fetchOpt.headers||{})},...fetchOpt,signal:controller.signal});
+    const j=await r.json();
+    if(!r.ok){const e=Error(j.error||'Request failed');e.code=j.code;e.status=r.status;throw e}
+    return j;
+  }catch(e){
+    if(e.name==='AbortError'){const x=Error('Lumora server did not respond in time.');x.code='REQUEST_TIMEOUT';throw x}
+    throw e;
+  }finally{clearTimeout(timeout)}
+}
 function applyTheme(){const key=(me&&me.theme)||localStorage.getItem('lumora-theme')||'Rose';const t=THEMES.find(x=>x[0]===key)||THEMES[0];document.documentElement.dataset.theme=key;document.documentElement.style.setProperty('--accent',t[1]);document.documentElement.style.setProperty('--accent2',t[2]);document.documentElement.style.setProperty('--accent3',t[3]);document.documentElement.style.setProperty('--soft',t[2]);}
 applyTheme();
 
@@ -320,9 +333,13 @@ async function sendInboxMessage(id){const el=document.getElementById('chatText')
 function shell(content){const v=state.view;return `<div class="app"><nav class="nav"><div class="brand"><img class="brand-logo" src="/logo.svg" alt="Lumora logo"><span>Lumora</span></div><div class="searchbar"><input id="globalSearch" placeholder="Search books, people, diaries..." value="" onkeydown="if(event.key==='Enter')doSearch(this.value)"><button onclick="doSearch(document.getElementById('globalSearch').value)">Search</button></div><div class="navlinks"><button class="${v==='home'?'active':''}" onclick="go('home')">Home</button><button class="${v==='news'?'active':''}" onclick="go('news')">News Feed</button><button class="${v==='discover'?'active':''}" onclick="go('discover')">Discovery</button><button class="${v==='chika'?'active':''}" onclick="go('chika')">Chika</button><button class="${v==='library'?'active':''}" onclick="go('library')">My Books</button><button class="${v==='profile'?'active':''}" onclick="go('profile')">Profile</button><button class="notification-btn" onclick="openNotifications()" title="Notifications">🔔${state.notificationCount?`<span class="notification-badge">${state.notificationCount>99?'99+':state.notificationCount}</span>`:''}</button><button class="${v==='inbox'?'active':''}" onclick="go('inbox')">💌 Inbox</button><button class="${v==='settings'?'active':''}" onclick="go('settings')">⚙ Settings</button><button onclick="logout()">Log out</button></div></nav>${content}</div>`}
 async function start(){
   app.innerHTML='<div class="app"><section class="hero"><div class="hero-kicker">Just a moment</div><h1>Opening Lumora ✨</h1><p id="bootMessage">Connecting to your Lumora space…</p></section></div>';
-  for(let attempt=0;attempt<30;attempt++){
+  for(let attempt=0;attempt<12;attempt++){
     try{
-      const x=await api('/api/me');
+      const label=document.getElementById('bootMessage');
+      if(label)label.textContent=attempt?'Still connecting to Lumora…':'Connecting to your Lumora space…';
+      await api('/api/health',{timeoutMs:6000});
+      if(label)label.textContent='Loading your account…';
+      const x=await api('/api/me',{timeoutMs:10000});
       me=x.user;
       if(me)applyTheme();
       if(!me)return auth();
@@ -338,8 +355,8 @@ async function start(){
       return;
     }catch(e){
       const label=document.getElementById('bootMessage');
-      if(label)label.textContent=attempt<29?'Lumora is waking up. Retrying…':'Lumora is taking longer than expected.';
-      if(attempt<29)await new Promise(r=>setTimeout(r,2000));
+      if(label)label.textContent=attempt<11?'Lumora is waking up. Retrying…':'Lumora could not reach the server.';
+      if(attempt<11)await new Promise(r=>setTimeout(r,1500));
     }
   }
   app.innerHTML='<div class="app"><section class="hero"><div class="hero-kicker">Lumora</div><h1>We could not connect yet.</h1><p>Your data was not changed. The server may still be starting.</p><button onclick="start()">Try Again</button></section></div>';
