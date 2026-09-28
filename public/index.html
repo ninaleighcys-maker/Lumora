@@ -509,7 +509,7 @@ function userPage(){
   const blocked=x.user.accountPrivacy==='private'&&!(x.relationship?.following||x.relationship?.friends);
   const tab=state.userProfileTab||'books';
   const request=x.relationship?.incomingFollowRequest;
-  const requestBanner=request?\`<div class="follow-request-banner" id="followRequestBanner"><div class="request-copy"><b>@\${esc(request.from?.username||x.user.username)} wants to follow you</b><div class="muted small">This request stays pending until you choose an action.</div></div><div class="request-actions"><button onclick="respondToProfileFollowRequest('\${attr(request.id)}','accept','\${attr(x.user.id)}')">Accept</button><button class="secondary" onclick="respondToProfileFollowRequest('\${attr(request.id)}','decline','\${attr(x.user.id)}')">Decline</button></div></div>\`:'';
+  const requestBanner=request?`<div class="follow-request-banner" id="followRequestBanner"><div class="request-copy"><b>@\${esc(request.from?.username||x.user.username)} wants to follow you</b><div class="muted small">This request stays pending until you choose an action.</div></div><div class="request-actions"><button onclick="respondToProfileFollowRequest('\${attr(request.id)}','accept','\${attr(x.user.id)}')">Accept</button><button class="secondary" onclick="respondToProfileFollowRequest('\${attr(request.id)}','decline','\${attr(x.user.id)}')">Decline</button></div></div>`:'';
   const listButton=(type,count,label)=>blocked
     ? '<div class="social-stat" aria-disabled="true"><b>'+count+'</b><span class="muted">'+label+'</span></div>'
     : '<div class="social-stat" onclick="openProfileSocial(\''+attr(x.user.id)+'\',\''+type+'\')"><b>'+count+'</b><span class="muted">'+label+'</span></div>';
