@@ -453,18 +453,26 @@ function socialCounts(d, userId) { const i=lumoraIndex(d); return {followers:i.f
 function socialSummary(d,u) { return {notifications:d.notifications.filter(n=>n.userId===u.id&&!n.readAt).length,...socialCounts(d,u.id), followRequests:d.followRequests.filter(x=>x.toId===u.id&&x.status==='pending').length, friendRequests:d.friendRequests.filter(x=>x.toId===u.id&&x.status==='pending').length, messageRequests:d.messageRequests.filter(x=>x.toId===u.id&&x.status==='pending').length}; }
 function messagingAllowed(d,from,to) {
   if (!to || from.id===to.id) return false;
-  if ((to.accountPrivacy||'public')==='private' && !accountVisible(d,to.id,from)) return false;
+  // Friends always have direct messaging access, even when the account is private.
   if (areFriends(d,from.id,to.id)) return true;
   const p=to.messagePermission||'everyone';
-  if(p==='everyone') return true;
+  // Non-friends do not enter the main inbox. They may only create a request
+  // when the selected privacy setting allows requests.
+  if(p==='everyone') return false;
   if(p==='followers') return isFollowing(d,from.id,to.id);
-  if(p==='friends') return false;
+  if(p==='friends'||p==='none') return false;
   return false;
 }
 function messageRequestAllowed(d,from,to) {
   if (!to || from.id===to.id) return false;
-  if ((to.accountPrivacy||'public')==='private' && !accountVisible(d,to.id,from)) return false;
-  return true;
+  // Message privacy is separate from account privacy. A private account can
+  // still receive a request when its message setting allows it.
+  const p=to.messagePermission||'everyone';
+  if(p==='everyone') return true;
+  if(p==='none') return isFollowing(d,from.id,to.id);
+  if(p==='followers') return isFollowing(d,from.id,to.id);
+  if(p==='friends') return areFriends(d,from.id,to.id);
+  return false;
 }
 function messageRequestDeclined(d,fromId,toId) {
   const rows=d.messageRequests.filter(r=>r.fromId===fromId&&r.toId===toId);
@@ -957,9 +965,9 @@ async function api(req, res) {
     if(!b || (b.userId!==u.id && b.visibility!=='public')) return send(res,404,{error:'Book not found.'});
     const x=await body(req); const chapterId=String(x.chapterId||''); const chapter=b.chapters.find(c=>c.id===chapterId);
     if(!chapter)return send(res,404,{error:'Chapter not found.'});
-    const scrollTop=Math.max(0,Number(x.scrollTop||0)); let rp=d.readingProgress.find(v=>v.userId===u.id&&v.bookId===bookId);
-    if(rp){rp.chapterId=chapterId;rp.pageNumber=b.chapters.findIndex(c=>c.id===chapterId)+1;rp.scrollTop=scrollTop;rp.updatedAt=Date.now();}
-    else{rp={id:id(),userId:u.id,bookId,chapterId,pageNumber:b.chapters.findIndex(c=>c.id===chapterId)+1,scrollTop,updatedAt:Date.now(),createdAt:Date.now()};d.readingProgress.push(rp);}
+    const scrollTop=Math.max(0,Number(x.scrollTop||0)); const anchorOffset=Number.isFinite(Number(x.anchorOffset))?Math.max(0,Number(x.anchorOffset)):null; const anchorViewportY=Number.isFinite(Number(x.anchorViewportY))?Math.max(0,Number(x.anchorViewportY)):null; let rp=d.readingProgress.find(v=>v.userId===u.id&&v.bookId===bookId);
+    if(rp){rp.chapterId=chapterId;rp.pageNumber=b.chapters.findIndex(c=>c.id===chapterId)+1;rp.scrollTop=scrollTop;rp.anchorOffset=anchorOffset;rp.anchorViewportY=anchorViewportY;rp.updatedAt=Date.now();}
+    else{rp={id:id(),userId:u.id,bookId,chapterId,pageNumber:b.chapters.findIndex(c=>c.id===chapterId)+1,scrollTop,anchorOffset,anchorViewportY,updatedAt:Date.now(),createdAt:Date.now()};d.readingProgress.push(rp);}
     save(d); return send(res,200,{ok:true,readingProgress:rp});
   }
 
@@ -981,7 +989,7 @@ async function api(req, res) {
       if(!d.bookReads.some(x=>x.userId===u.id&&x.bookId===bookId)) d.bookReads.push({id:id(),userId:u.id,bookId,createdAt:Date.now()});
       if(!d.chapterReads.some(x=>x.userId===u.id&&x.bookId===bookId&&x.chapterId===chapterId)) d.chapterReads.push({id:id(),userId:u.id,bookId,chapterId,createdAt:Date.now()});
       save(d);
-      return send(res,200,{book:publicBook(b,d,u.id),chapter:publicChapter(c),pageNumber,scrollTop:Math.max(0,Number(rp?.scrollTop||0)),comments:d.comments.filter(x=>x.targetType==='chapter'&&x.targetId===c.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)})),highlights:d.highlights.filter(x=>x.userId===u.id&&x.chapterId===c.id),bookmark:d.bookmarks.find(x=>x.userId===u.id&&x.chapterId===c.id)||null});
+      return send(res,200,{book:publicBook(b,d,u.id),chapter:publicChapter(c),pageNumber,scrollTop:Math.max(0,Number(rp?.scrollTop||0)),anchorOffset:Number.isFinite(Number(rp?.anchorOffset))?Number(rp.anchorOffset):null,anchorViewportY:Number.isFinite(Number(rp?.anchorViewportY))?Number(rp.anchorViewportY):null,comments:d.comments.filter(x=>x.targetType==='chapter'&&x.targetId===c.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)})),highlights:d.highlights.filter(x=>x.userId===u.id&&x.chapterId===c.id),bookmark:d.bookmarks.find(x=>x.userId===u.id&&x.chapterId===c.id)||null});
     }
     if(!d.bookReads.some(x=>x.userId===u.id&&x.bookId===bookId)) { d.bookReads.push({id:id(),userId:u.id,bookId,createdAt:Date.now()}); save(d); }
     return send(res,200,{book:publicBook(b,d,u.id)});
