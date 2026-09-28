@@ -30,7 +30,7 @@ let remoteSaveQueue = Promise.resolve();
 
 const EMPTY_DB = {
   users: [], sessions: [], emailVerifications: [], passwordResets: [], books: [], diaries: [],
-  posts: [], comments: [], likes: [], highlights: [], bookmarks: [], follows: [], followRequests: [], friendRequests: [], friendships: [], messages: [], messageRequests: [], notifications: [], libraries: [], readingProgress: [], favorites: [], bookReads: [], chapterReads: []
+  posts: [], comments: [], likes: [], highlights: [], bookmarks: [], follows: [], followRequests: [], friendRequests: [], friendships: [], messages: [], messageRequests: [], notifications: [], libraries: [], readingProgress: [], favorites: [], reposts: [], bookReads: [], chapterReads: []
 };
 if (!fs.existsSync(DB_FILE)) {
   // One-time migration from the old project-local database. This keeps existing
@@ -303,8 +303,8 @@ async function sendVerificationEmail(u, token, code) {
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: u.email,
     subject: 'Your Lumora verification code',
-    text: `Welcome to Lumora.\n\nYour Lumora verification code is: ${code}\n\nEnter this 6-digit code in Lumora to verify your email. This code expires in 24 hours.`,
-    html: `<p>Welcome to Lumora.</p><p>Your Lumora verification code is:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px"><b>${code}</b></p><p>Enter this 6-digit code in Lumora to verify your email.</p><p>This code expires in <b>24 hours</b>.</p>`
+    text: `Welcome to Lumora.\n\nYour Lumora verification code is: ${code}\n\nEnter this 6-digit code in Lumora to verify your email. This code expires in 5 minutes.`,
+    html: `<p>Welcome to Lumora.</p><p>Your Lumora verification code is:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px"><b>${code}</b></p><p>Enter this 6-digit code in Lumora to verify your email.</p><p>This code expires in <b>5 minutes</b>.</p>`
   });
   return { delivered: true };
 }
@@ -312,7 +312,7 @@ function createVerification(d, u) {
   const token = crypto.randomBytes(32).toString('hex');
   const code = String(crypto.randomInt(100000, 1000000));
   d.emailVerifications = d.emailVerifications.filter(x => x.userId !== u.id);
-  d.emailVerifications.push({ tokenHash: hashResetToken(token), codeHash: hashResetToken(code), userId: u.id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+  d.emailVerifications.push({ tokenHash: hashResetToken(token), codeHash: hashResetToken(code), userId: u.id, expiresAt: Date.now() + 5 * 60 * 1000 });
   return { token, code };
 }
 
@@ -535,7 +535,7 @@ async function api(req, res) {
     const name = String(x.name || username).trim();
     const password = String(x.password || '');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return send(res, 400, { error: 'Please enter a valid email address.' });
-    if (!/^[a-z0-9_]{3,24}$/.test(username)) return send(res, 400, { error: 'Username must be 3-24 characters using letters, numbers, or underscores.' });
+    if (!/^[a-z0-9_]{3,25}$/.test(username)) return send(res, 400, { error: 'Username must be 3-25 characters using letters, numbers, or underscores.' });
     if (password.length < 8) return send(res, 400, { error: 'Password must be at least 8 characters.' });
     const d = db();
     if (d.users.some(u => u.username === username)) return send(res, 409, { error: 'Username already exists.' });
@@ -659,7 +659,7 @@ async function api(req, res) {
   if (req.method === 'GET' && p === '/api/profile/check-username') {
     const u=requireUser(req,res); if(!u)return;
     const username=String(url.searchParams.get('username')||'').trim().toLowerCase();
-    if(!/^[a-z0-9_]{3,24}$/.test(username))return send(res,200,{available:false,reason:'Username must be 3-24 characters using letters, numbers, or underscores.'});
+    if(!/^[a-z0-9_]{3,25}$/.test(username))return send(res,200,{available:false,reason:'Username must be 3-25 characters using letters, numbers, or underscores.'});
     const taken=d.users.some(item=>item.username===username&&item.id!==u.id);
     return send(res,200,{available:!taken,reason:taken?'Username already taken.':'Username available.'});
   }
@@ -673,7 +673,7 @@ async function api(req, res) {
     if(x.username!==undefined){
       username=String(x.username||'').trim().toLowerCase();
       if(username!==current.username){
-        if(!/^[a-z0-9_]{3,24}$/.test(username))return send(res,400,{error:'Username must be 3-24 characters using letters, numbers, or underscores.'});
+        if(!/^[a-z0-9_]{3,25}$/.test(username))return send(res,400,{error:'Username must be 3-25 characters using letters, numbers, or underscores.'});
         if(d.users.some(item=>item.username===username&&item.id!==current.id))return send(res,409,{error:'Username already taken.'});
         const currentPassword=String(x.currentPassword||'');
         if(!currentPassword||!verifyPassword(currentPassword,current.passwordHash))return send(res,401,{error:'Current password is required to change your username.'});
