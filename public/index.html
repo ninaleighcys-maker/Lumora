@@ -318,7 +318,32 @@ async function handleInboxMessageRequest(id,action){try{const r=await api('/api/
 async function respondToProfileFollowRequest(id,action,userId){try{await api('/api/follow-requests/'+id+'/'+action,{method:'POST'});const banner=document.getElementById('followRequestBanner');if(banner)banner.remove();await refreshNotificationCount();const x=await api('/api/users/'+userId);state.profile=x;userPage()}catch(e){alert(e.message)}}
 async function sendInboxMessage(id){const el=document.getElementById('chatText'),btn=document.getElementById('chatSend'),value=String(el?.value||'').trim();if(!value||!btn)return;btn.disabled=true;try{const r=await api('/api/messages/'+id,{method:'POST',body:JSON.stringify({content:value,clientMessageId:crypto.randomUUID()})});if(r.request){await inboxPage(id);return}el.value='';const box=document.getElementById('chatMessages');if(box){box.insertAdjacentHTML('beforeend',inboxBubble(r.message));box.scrollTop=box.scrollHeight}}catch(e){if(e?.message==="You can't message this person"){const box=document.getElementById('chatMessages');if(box)box.insertAdjacentHTML('beforeend','<div class="message-blocked">You can\'t message this person.</div>');const compose=document.querySelector('.chat-compose');if(compose)compose.innerHTML='<div class="message-blocked" style="width:100%">You can\'t message this person.</div>';}else alert(e.message)}finally{btn.disabled=false}}
 function shell(content){const v=state.view;return `<div class="app"><nav class="nav"><div class="brand"><img class="brand-logo" src="/logo.svg" alt="Lumora logo"><span>Lumora</span></div><div class="searchbar"><input id="globalSearch" placeholder="Search books, people, diaries..." value="" onkeydown="if(event.key==='Enter')doSearch(this.value)"><button onclick="doSearch(document.getElementById('globalSearch').value)">Search</button></div><div class="navlinks"><button class="${v==='home'?'active':''}" onclick="go('home')">Home</button><button class="${v==='news'?'active':''}" onclick="go('news')">News Feed</button><button class="${v==='discover'?'active':''}" onclick="go('discover')">Discovery</button><button class="${v==='chika'?'active':''}" onclick="go('chika')">Chika</button><button class="${v==='library'?'active':''}" onclick="go('library')">My Books</button><button class="${v==='profile'?'active':''}" onclick="go('profile')">Profile</button><button class="notification-btn" onclick="openNotifications()" title="Notifications">🔔${state.notificationCount?`<span class="notification-badge">${state.notificationCount>99?'99+':state.notificationCount}</span>`:''}</button><button class="${v==='inbox'?'active':''}" onclick="go('inbox')">💌 Inbox</button><button class="${v==='settings'?'active':''}" onclick="go('settings')">⚙ Settings</button><button onclick="logout()">Log out</button></div></nav>${content}</div>`}
-async function start(){const x=await api('/api/me');me=x.user;if(me)applyTheme();if(!me)return auth();if(!me.emailVerified)return verificationPage();await dashboard();if(state.view==='reader'){const savedReader=localStorage.getItem('lumora-reader-location');if(savedReader){try{const loc=JSON.parse(savedReader);if(loc?.bookId&&loc?.chapterId)await openChapter(loc.bookId,loc.chapterId)}catch(e){localStorage.removeItem('lumora-reader-location')}}}}
+async function start(){
+  app.innerHTML='<div class="app"><section class="hero"><div class="hero-kicker">Just a moment</div><h1>Opening Lumora ✨</h1><p id="bootMessage">Connecting to your Lumora space…</p></section></div>';
+  for(let attempt=0;attempt<30;attempt++){
+    try{
+      const x=await api('/api/me');
+      me=x.user;
+      if(me)applyTheme();
+      if(!me)return auth();
+      if(!me.emailVerified)return verificationPage();
+      await dashboard();
+      if(state.view==='reader'){
+        const savedReader=localStorage.getItem('lumora-reader-location');
+        if(savedReader){
+          try{const loc=JSON.parse(savedReader);if(loc?.bookId&&loc?.chapterId)await openChapter(loc.bookId,loc.chapterId)}
+          catch(e){localStorage.removeItem('lumora-reader-location')}
+        }
+      }
+      return;
+    }catch(e){
+      const label=document.getElementById('bootMessage');
+      if(label)label.textContent=attempt<29?'Lumora is waking up. Retrying…':'Lumora is taking longer than expected.';
+      if(attempt<29)await new Promise(r=>setTimeout(r,2000));
+    }
+  }
+  app.innerHTML='<div class="app"><section class="hero"><div class="hero-kicker">Lumora</div><h1>We could not connect yet.</h1><p>Your data was not changed. The server may still be starting.</p><button onclick="start()">Try Again</button></section></div>';
+}
 async function openNotifications(){
   try{
     const x=await api('/api/notifications');
