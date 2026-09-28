@@ -273,7 +273,7 @@ function publicBook(b, d, viewerId) {
 }
 function publicPost(p,d,viewerId=null){const likes=d.likes.filter(x=>x.targetType==='post'&&x.targetId===p.id);return {...p,author:publicUser(d,p.userId),commentCount:d.comments.filter(c=>c.targetType==='post'&&c.targetId===p.id).length,likesCount:likes.length,liked:!!viewerId&&likes.some(x=>x.userId===viewerId),mentions:publicMentions(d,p.mentionUserIds)};}
 function publicDiary(x,d,viewerId=null){const likes=d.likes.filter(l=>l.targetType==='diary'&&l.targetId===x.id);return {...x,author:publicUser(d,x.userId),commentCount:d.comments.filter(c=>c.targetType==='diary'&&c.targetId===x.id).length,likesCount:likes.length,liked:!!viewerId&&likes.some(l=>l.userId===viewerId),mentions:publicMentions(d,x.mentionUserIds)};}
-function publicComment(c,d){return {...c,parentId:c.parentId||null,author:publicUser(d,c.userId),mentions:publicMentions(d,c.mentionUserIds)};}
+function publicComment(c,d){return {...c,parentId:c.parentId||null,author:publicUser(d,c.userId),mentions:publicMentions(d,c.mentionUserIds)};}function publicRepost(r,d,viewerId=null){const p=d.posts.find(x=>x.id===r.postId&&!x.deletedAt&&x.visibility==='public');return p?{id:r.id,createdAt:r.createdAt,post:publicPost(p,d,viewerId),reposter:publicUser(d,r.userId)}:null;}
 function publicChapter(c) { return { id: c.id, title: c.title, content: c.content || '', contentHtml: sanitizeStoryHtml(c.contentHtml || '') }; }
 const GENRES = ['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
 function cleanTags(value) {
@@ -603,7 +603,7 @@ async function api(req, res) {
       archivedPosts: d.posts.filter(x => x.userId === u.id && x.archivedAt && !x.deletedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d)),
       libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
       continueReading: d.readingProgress.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id), chapterId:x.chapterId, pageNumber:x.pageNumber, progressUpdatedAt:x.updatedAt} : null; }).filter(Boolean).sort((a,b)=>(b.progressUpdatedAt||0)-(a.progressUpdatedAt||0)),
-      favorites: d.favorites.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id), favorited:true, favoritedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>(b.favoritedAt||0)-(a.favoritedAt||0)),
+      favorites: d.favorites.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id), favorited:true, favoritedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>(b.favoritedAt||0)-(a.favoritedAt||0)),      reposts: d.reposts.filter(x=>x.userId===u.id).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(x=>publicRepost(x,d,u.id)).filter(Boolean),
       social: socialSummary(d,u)
     });
   }
@@ -699,8 +699,8 @@ async function api(req, res) {
     const relationship = { following:isFollowing(d,u.id,userId), follower:isFollowing(d,userId,u.id), friends:areFriends(d,u.id,userId), pendingFollow:!!d.followRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending'), pendingFriend:!!d.friendRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending') };
     const books=visible?d.books.filter(b=>b.userId===userId&&!b.deletedAt&&b.visibility==='public').sort((a,b)=>b.updatedAt-a.updatedAt).map(b=>publicBook(b,d)):[];
     const diaries=visible?d.diaries.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicDiary(x,d)):[];
-    const posts=visible?d.posts.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)&&!x.archivedAt).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicPost(x,d)):[];
-    return send(res,200,{user:{id:profile.id,username:profile.username,name:profile.name,bio:visible?profile.bio:'',avatarUrl:profile.avatarUrl||'',coverUrl:visible?(profile.coverUrl||''):'',favoriteQuote:visible?(profile.favoriteQuote||''):'',createdAt:profile.createdAt,accountPrivacy:profile.accountPrivacy||'public'},relationship,counts:socialCounts(d,userId),books,diaries,posts});
+    const posts=visible?d.posts.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)&&!x.archivedAt).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicPost(x,d)):[];    const reposts=visible?d.reposts.filter(x=>x.userId===userId).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicRepost(x,d,u.id)).filter(Boolean):[];
+    return send(res,200,{user:{id:profile.id,username:profile.username,name:profile.name,bio:visible?profile.bio:'',avatarUrl:profile.avatarUrl||'',coverUrl:visible?(profile.coverUrl||''):'',favoriteQuote:visible?(profile.favoriteQuote||''):'',createdAt:profile.createdAt,accountPrivacy:profile.accountPrivacy||'public'},relationship,counts:socialCounts(d,userId),books,diaries,posts,reposts});
   }
 
   if (req.method === 'GET' && p.startsWith('/api/people/')) {
@@ -947,6 +947,8 @@ async function api(req, res) {
     return send(res,200,{ok:true,liked:d.likes.some(x=>x.userId===u.id&&x.targetType===targetType&&x.targetId===targetId),likesCount:d.likes.filter(x=>x.targetType===targetType&&x.targetId===targetId).length});
   }
 
+  if (req.method === 'POST' && p.startsWith('/api/reposts/')) { const postId=p.split('/').pop(); const post=d.posts.find(x=>x.id===postId&&!x.deletedAt&&x.visibility==='public'); if(!post)return send(res,404,{error:'Public post not found.'}); let repost=d.reposts.find(x=>x.userId===u.id&&x.postId===postId); if(!repost){repost={id:id(),userId:u.id,postId,createdAt:Date.now()};d.reposts.push(repost);save(d);} return send(res,200,{ok:true,reposted:true,repost:publicRepost(repost,d,u.id)}); }
+  if (req.method === 'DELETE' && p.startsWith('/api/reposts/')) { const postId=p.split('/').pop();d.reposts=d.reposts.filter(x=>!(x.userId===u.id&&x.postId===postId));save(d);return send(res,200,{ok:true,reposted:false}); }
   if (req.method === 'POST' && p.startsWith('/api/favorites/')) {
     const bookId=p.split('/').pop(); const b=d.books.find(x=>x.id===bookId&&!x.deletedAt);
     if(!b || b.visibility!=='public' || !accountVisible(d,b.userId,u)) return send(res,404,{error:'Book not found.'});
