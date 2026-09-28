@@ -191,8 +191,9 @@ function requireUser(req, res, options = {}) {
 }
 function lumoraIndex(d){
   let idx=d.__lumoraIndex;if(idx)return idx;
-  const usersById=new Map(),follows=new Set(),friends=new Set(),followersByUser=new Map(),followingByUser=new Map(),friendsByUser=new Map(),commentsByTarget=new Map(),likesByTarget=new Map(),repostsByUserPost=new Set(),notificationsByUser=new Map(),messagesByPair=new Map(),chapterReads=new Map();
+  const usersById=new Map(),booksById=new Map(),chapterToBook=new Map(),follows=new Set(),friends=new Set(),followersByUser=new Map(),followingByUser=new Map(),friendsByUser=new Map(),commentsByTarget=new Map(),likesByTarget=new Map(),repostsByUserPost=new Set(),notificationsByUser=new Map(),messagesByPair=new Map(),chapterReads=new Map();
   for(const u of d.users)usersById.set(u.id,u);
+  for(const b of d.books){booksById.set(b.id,b);for(const ch of b.chapters||[])chapterToBook.set(ch.id,b.id);}
   for(const x of d.follows){follows.add(x.followerId+'|'+x.followingId);let a=followingByUser.get(x.followerId);if(!a){a=new Set();followingByUser.set(x.followerId,a)}a.add(x.followingId);let b=followersByUser.get(x.followingId);if(!b){b=new Set();followersByUser.set(x.followingId,b)}b.add(x.followerId)}
   for(const x of d.friendships){const k=x.userA<x.userB?x.userA+'|'+x.userB:x.userB+'|'+x.userA;friends.add(k);for(const id of [x.userA,x.userB]){let a=friendsByUser.get(id);if(!a){a=new Set();friendsByUser.set(id,a)}a.add(id===x.userA?x.userB:x.userA)}}
   for(const x of d.comments){const k=x.targetType+'|'+x.targetId;commentsByTarget.set(k,(commentsByTarget.get(k)||0)+1)}
@@ -201,7 +202,7 @@ function lumoraIndex(d){
   for(const x of d.notifications){let a=notificationsByUser.get(x.userId);if(!a){a=[];notificationsByUser.set(x.userId,a)}a.push(x)}
   for(const x of d.messages){const k=x.fromId<x.toId?x.fromId+'|'+x.toId:x.toId+'|'+x.fromId;let a=messagesByPair.get(k);if(!a){a=[];messagesByPair.set(k,a)}a.push(x)}
   for(const x of d.chapterReads)chapterReads.set(x.chapterId,(chapterReads.get(x.chapterId)||0)+1);
-  idx={usersById,follows,friends,followersByUser,followingByUser,friendsByUser,commentsByTarget,likesByTarget,repostsByUserPost,notificationsByUser,messagesByPair,chapterReads};
+  idx={usersById,booksById,chapterToBook,follows,friends,followersByUser,followingByUser,friendsByUser,commentsByTarget,likesByTarget,repostsByUserPost,notificationsByUser,messagesByPair,chapterReads};
   Object.defineProperty(d,'__lumoraIndex',{value:idx,writable:true,configurable:true,enumerable:false});return idx;
 }
 function undirectedKey(a,b){return a<b?a+'|'+b:b+'|'+a}
@@ -304,8 +305,12 @@ function publicBook(b, d, viewerId) {
     chapters: b.chapters.map(c => ({ id: c.id, title: c.title, readCount: chapterReadCount(d, c.id) }))
   };
 }
-function publicPost(p,d,viewerId=null){const likes=d.likes.filter(x=>x.targetType==='post'&&x.targetId===p.id);const reposted=!!viewerId&&d.reposts.some(x=>x.userId===viewerId&&x.postId===p.id);return {...p,author:publicUser(d,p.userId),commentCount:d.comments.filter(c=>c.targetType==='post'&&c.targetId===p.id).length,likesCount:likes.length,liked:!!viewerId&&likes.some(x=>x.userId===viewerId),reposted,mentions:publicMentions(d,p.mentionUserIds)};}
-function publicDiary(x,d,viewerId=null){const likes=d.likes.filter(l=>l.targetType==='diary'&&l.targetId===x.id);return {...x,author:publicUser(d,x.userId),commentCount:d.comments.filter(c=>c.targetType==='diary'&&c.targetId===x.id).length,likesCount:likes.length,liked:!!viewerId&&likes.some(l=>l.userId===viewerId),mentions:publicMentions(d,x.mentionUserIds)};}
+function publicBookSummary(b, d, viewerId) {
+  const stats = bookStats(d, b, viewerId);
+  return { id:b.id, userId:b.userId, title:b.title, description:b.description, cover:b.cover, genre:b.genre, tags:Array.isArray(b.tags)?b.tags:[], visibility:b.visibility, readingCount:stats.reads, fontFamily:storyFont(b.fontFamily), stats, createdAt:b.createdAt, updatedAt:b.updatedAt, author:publicUser(d,b.userId) };
+}
+function publicPost(p,d,viewerId=null){const idx=lumoraIndex(d),lk=idx.likesByTarget.get('post|'+p.id)||{count:0,users:new Set()};return {...p,author:publicUser(d,p.userId),commentCount:idx.commentsByTarget.get('post|'+p.id)||0,likesCount:lk.count,liked:!!viewerId&&lk.users.has(viewerId),reposted:!!viewerId&&idx.repostsByUserPost.has(viewerId+'|'+p.id),mentions:publicMentions(d,p.mentionUserIds)};}
+function publicDiary(x,d,viewerId=null){const idx=lumoraIndex(d),lk=idx.likesByTarget.get('diary|'+x.id)||{count:0,users:new Set()};return {...x,author:publicUser(d,x.userId),commentCount:idx.commentsByTarget.get('diary|'+x.id)||0,likesCount:lk.count,liked:!!viewerId&&lk.users.has(viewerId),mentions:publicMentions(d,x.mentionUserIds)};}
 function publicComment(c,d){return {...c,parentId:c.parentId||null,author:publicUser(d,c.userId),mentions:publicMentions(d,c.mentionUserIds)};}function publicRepost(r,d,viewerId=null){const p=d.posts.find(x=>x.id===r.postId&&!x.deletedAt&&x.visibility==='public');return p?{id:r.id,createdAt:r.createdAt,post:publicPost(p,d,viewerId),reposter:publicUser(d,r.userId)}:null;}
 function publicChapter(c) { return { id: c.id, title: c.title, content: c.content || '', contentHtml: sanitizeStoryHtml(c.contentHtml || '') }; }
 const GENRES = ['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
@@ -633,10 +638,9 @@ async function api(req, res) {
       books: d.books.filter(b => b.userId === u.id && !b.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt).map(b => ({...b, tags: Array.isArray(b.tags)?b.tags:[], stats: bookStats(d,b,u.id), fontFamily: storyFont(b.fontFamily)})),
       diaries: d.diaries.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt),
       posts: d.posts.filter(x => x.userId === u.id && !x.deletedAt && !x.archivedAt).sort((a,b) => b.createdAt-a.createdAt).map(p => publicPost(p,d,u.id)),      archivedPosts: d.posts.filter(x => x.userId === u.id && !x.deletedAt && !!x.archivedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d,u.id)),
-      archivedPosts: d.posts.filter(x => x.userId === u.id && x.archivedAt && !x.deletedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d)),
-      libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
-      continueReading: d.readingProgress.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id), chapterId:x.chapterId, pageNumber:x.pageNumber, progressUpdatedAt:x.updatedAt} : null; }).filter(Boolean).sort((a,b)=>(b.progressUpdatedAt||0)-(a.progressUpdatedAt||0)),
-      favorites: d.favorites.filter(x=>x.userId===u.id).map(x=> { const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b ? {...publicBook(b,d,u.id), favorited:true, favoritedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>(b.favoritedAt||0)-(a.favoritedAt||0)),      reposts: d.reposts.filter(x=>x.userId===u.id).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(x=>publicRepost(x,d,u.id)).filter(Boolean),
+      libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
+      continueReading: d.readingProgress.filter(x=>x.userId===u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id), chapterId:x.chapterId, pageNumber:x.pageNumber, progressUpdatedAt:x.updatedAt} : null; }).filter(Boolean).sort((a,b)=>(b.progressUpdatedAt||0)-(a.progressUpdatedAt||0)),
+      favorites: d.favorites.filter(x=>x.userId===u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id), favorited:true, favoritedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>(b.favoritedAt||0)-(a.favoritedAt||0)),      reposts: d.reposts.filter(x=>x.userId===u.id).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(x=>publicRepost(x,d,u.id)).filter(Boolean),
       social: socialSummary(d,u)
     });
   }
@@ -684,7 +688,7 @@ async function api(req, res) {
     const q=searchable(url.searchParams.get('q')).trim();
     if(!q) return send(res,200,{books:[],people:[],diaries:[],posts:[]});
     const people=d.users.filter(x=>accountVisible(d,x.id,u)&& (searchable(x.username).includes(q)||searchable(x.name).includes(q))).map(x=>({id:x.id,username:x.username,name:x.name,bio:x.bio,avatarUrl:x.avatarUrl||''})).slice(0,20);
-    const books=d.books.filter(b=>b.visibility==='public' && !b.deletedAt && accountVisible(d,b.userId,u)).filter(b=>[b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(b=>publicBook(b,d));
+    const books=d.books.filter(b=>b.visibility==='public' && !b.deletedAt && accountVisible(d,b.userId,u)).filter(b=>[b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(b=>publicBookSummary(b,d));
     const diaries=d.diaries.filter(x=>!x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.title,x.content,x.mood,x.weather,x.season,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicDiary(x,d,u.id));
     const posts=d.posts.filter(x=>!x.archivedAt && !x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.content,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicPost(x,d,u.id));
     return send(res,200,{books,people,diaries,posts});
@@ -695,6 +699,17 @@ async function api(req, res) {
     if(!/^[a-z0-9_]{3,25}$/.test(username))return send(res,200,{available:false,reason:'Username must be 3-25 characters using letters, numbers, or underscores.'});
     const taken=[...lumoraIndex(d).usersById.values()].some(item=>item.username===username&&item.id!==u.id);
     return send(res,200,{available:!taken,reason:taken?'Username already taken.':'Username available.'});
+  }
+
+  if (req.method === 'PUT' && p === '/api/profile/theme') {
+    const u = requireUser(req, res); if (!u) return;
+    const x = await body(req); const d = db();
+    const current = d.users.find(user => user.id === u.id);
+    if (!current) return send(res,404,{error:'Account not found.'});
+    const theme = String(x.theme || '').trim().slice(0,60);
+    if (!theme) return send(res,400,{error:'Theme is required.'});
+    current.theme = theme;
+    save(d); return send(res,200,{user:safeUser(current)});
   }
 
   if (req.method === 'PUT' && p === '/api/profile') {
@@ -712,14 +727,14 @@ async function api(req, res) {
         if(!currentPassword||!verifyPassword(currentPassword,current.passwordHash))return send(res,401,{error:'Current password is required to change your username.'});
       }
     }
-    const name = String(x.name || '').trim().slice(0,80);
-    const bio = String(x.bio || '').trim().slice(0,500);
-    const avatarUrl = String(x.avatarUrl || '').trim().slice(0,5000000);
-    const coverUrl = String(x.coverUrl || '').trim().slice(0,5000000);
-    const favoriteQuote = String(x.favoriteQuote || '').trim().slice(0,300);
-    const accountPrivacy = x.accountPrivacy === 'private' ? 'private' : 'public';
-    const messagePermission = ['everyone','followers','friends','none'].includes(x.messagePermission) ? x.messagePermission : (current.messagePermission || 'everyone');
-    const theme = String(x.theme || current.theme || 'Rose').trim().slice(0,60);
+    const name = x.name === undefined ? current.name : String(x.name || '').trim().slice(0,80);
+    const bio = x.bio === undefined ? (current.bio || '') : String(x.bio || '').trim().slice(0,500);
+    const avatarUrl = x.avatarUrl === undefined ? (current.avatarUrl || '') : String(x.avatarUrl || '').trim().slice(0,5000000);
+    const coverUrl = x.coverUrl === undefined ? (current.coverUrl || '') : String(x.coverUrl || '').trim().slice(0,5000000);
+    const favoriteQuote = x.favoriteQuote === undefined ? (current.favoriteQuote || '') : String(x.favoriteQuote || '').trim().slice(0,300);
+    const accountPrivacy = x.accountPrivacy === undefined ? (current.accountPrivacy || 'public') : (x.accountPrivacy === 'private' ? 'private' : 'public');
+    const messagePermission = x.messagePermission === undefined ? (current.messagePermission || 'everyone') : (['everyone','followers','friends','none'].includes(x.messagePermission) ? x.messagePermission : (current.messagePermission || 'everyone'));
+    const theme = x.theme === undefined ? (current.theme || 'Rose') : String(x.theme || current.theme || 'Rose').trim().slice(0,60);
     if (!name) return send(res,400,{error:'Display name is required.'});
     current.username=username; current.name=name; current.bio=bio; current.avatarUrl=avatarUrl; current.coverUrl=coverUrl; current.favoriteQuote=favoriteQuote; current.accountPrivacy=accountPrivacy; current.messagePermission=messagePermission; current.theme=theme;
     save(d); return send(res,200,{user:safeUser(current)});
@@ -730,7 +745,7 @@ async function api(req, res) {
     if(!profile) return send(res,404,{error:'User not found.'});
     const visible = accountVisible(d,userId,u);
     const relationship = { following:isFollowing(d,u.id,userId), follower:isFollowing(d,userId,u.id), friends:areFriends(d,u.id,userId), pendingFollow:!!d.followRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending'), pendingFriend:!!d.friendRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending') };
-    const books=visible?d.books.filter(b=>b.userId===userId&&!b.deletedAt&&b.visibility==='public').sort((a,b)=>b.updatedAt-a.updatedAt).map(b=>publicBook(b,d)):[];
+    const books=visible?d.books.filter(b=>b.userId===userId&&!b.deletedAt&&b.visibility==='public').sort((a,b)=>b.updatedAt-a.updatedAt).map(b=>publicBookSummary(b,d)):[];
     const diaries=visible?d.diaries.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicDiary(x,d)):[];
     const posts=visible?d.posts.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)&&!x.archivedAt).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicPost(x,d)):[];    const reposts=visible?d.reposts.filter(x=>x.userId===userId).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicRepost(x,d,u.id)).filter(Boolean):[];
     return send(res,200,{user:{id:profile.id,username:profile.username,name:profile.name,bio:visible?profile.bio:'',avatarUrl:profile.avatarUrl||'',coverUrl:visible?(profile.coverUrl||''):'',favoriteQuote:visible?(profile.favoriteQuote||''):'',createdAt:profile.createdAt,accountPrivacy:profile.accountPrivacy||'public'},relationship,counts:socialCounts(d,userId),books,diaries,posts,reposts});
@@ -812,7 +827,7 @@ async function api(req, res) {
 
 
   if (req.method === 'GET' && p === '/api/notifications') {
-    const items=d.notifications.filter(n=>n.userId===u.id).sort((a,b)=>b.createdAt-a.createdAt).slice(0,100).map(n=>{const item={...n,actor:publicUser(d,n.actorId)};if(n.targetType==='chapter'){for(const b of d.books){if((b.chapters||[]).some(c=>c.id===n.targetId)){item.bookId=b.id;break;}}}return item;});
+    const items=d.notifications.filter(n=>n.userId===u.id).sort((a,b)=>b.createdAt-a.createdAt).slice(0,100).map(n=>{const item={...n,actor:publicUser(d,n.actorId)};if(n.targetType==='chapter'){const bid=lumoraIndex(d).chapterToBook.get(n.targetId);if(bid)item.bookId=bid;}return item;});
     return send(res,200,{notifications:items,unread:items.filter(n=>!n.readAt).length});
   }
   if (req.method === 'POST' && p === '/api/notifications/read-all') {
@@ -958,7 +973,7 @@ async function api(req, res) {
 
 
   if (req.method === 'GET' && p === '/api/library') {
-    const entries=d.libraries.filter(x=>x.userId===u.id).map(x=>{const b=d.books.find(b=>b.id===x.bookId&&!b.deletedAt); return b?{...publicBook(b,d),addedAt:x.createdAt}:null}).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt);
+    const entries=d.libraries.filter(x=>x.userId===u.id).map(x=>{const b=lumoraIndex(d).booksById.get(x.bookId); return b&&!b.deletedAt?{...publicBookSummary(b,d,u.id),addedAt:x.createdAt}:null}).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt);
     return send(res,200,{books:entries});
   }
   if (req.method === 'POST' && p.startsWith('/api/library/')) {
