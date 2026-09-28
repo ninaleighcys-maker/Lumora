@@ -61,6 +61,7 @@ function db() {
 }
 function save(d) {
   if (Object.prototype.hasOwnProperty.call(d,'__bookStatsCache')) delete d.__bookStatsCache;
+  if (Object.prototype.hasOwnProperty.call(d,'__lumoraIndex')) delete d.__lumoraIndex;
   if (remotePool && remoteDb) {
     remoteDb = normalizeDb(d);
     const snapshot = JSON.parse(JSON.stringify(remoteDb));
@@ -188,17 +189,34 @@ function requireUser(req, res, options = {}) {
   }
   return u;
 }
+function lumoraIndex(d){
+  let idx=d.__lumoraIndex;if(idx)return idx;
+  const usersById=new Map(),follows=new Set(),friends=new Set(),followersByUser=new Map(),followingByUser=new Map(),friendsByUser=new Map(),commentsByTarget=new Map(),likesByTarget=new Map(),repostsByUserPost=new Set(),notificationsByUser=new Map(),messagesByPair=new Map(),chapterReads=new Map();
+  for(const u of d.users)usersById.set(u.id,u);
+  for(const x of d.follows){follows.add(x.followerId+'|'+x.followingId);let a=followingByUser.get(x.followerId);if(!a){a=new Set();followingByUser.set(x.followerId,a)}a.add(x.followingId);let b=followersByUser.get(x.followingId);if(!b){b=new Set();followersByUser.set(x.followingId,b)}b.add(x.followerId)}
+  for(const x of d.friendships){const k=x.userA<x.userB?x.userA+'|'+x.userB:x.userB+'|'+x.userA;friends.add(k);for(const id of [x.userA,x.userB]){let a=friendsByUser.get(id);if(!a){a=new Set();friendsByUser.set(id,a)}a.add(id===x.userA?x.userB:x.userA)}}
+  for(const x of d.comments){const k=x.targetType+'|'+x.targetId;commentsByTarget.set(k,(commentsByTarget.get(k)||0)+1)}
+  for(const x of d.likes){const k=x.targetType+'|'+x.targetId;let v=likesByTarget.get(k);if(!v){v={count:0,users:new Set()};likesByTarget.set(k,v)}v.count++;v.users.add(x.userId)}
+  for(const x of d.reposts)repostsByUserPost.add(x.userId+'|'+x.postId);
+  for(const x of d.notifications){let a=notificationsByUser.get(x.userId);if(!a){a=[];notificationsByUser.set(x.userId,a)}a.push(x)}
+  for(const x of d.messages){const k=x.fromId<x.toId?x.fromId+'|'+x.toId:x.toId+'|'+x.fromId;let a=messagesByPair.get(k);if(!a){a=[];messagesByPair.set(k,a)}a.push(x)}
+  for(const x of d.chapterReads)chapterReads.set(x.chapterId,(chapterReads.get(x.chapterId)||0)+1);
+  idx={usersById,follows,friends,followersByUser,followingByUser,friendsByUser,commentsByTarget,likesByTarget,repostsByUserPost,notificationsByUser,messagesByPair,chapterReads};
+  Object.defineProperty(d,'__lumoraIndex',{value:idx,writable:true,configurable:true,enumerable:false});return idx;
+}
+function undirectedKey(a,b){return a<b?a+'|'+b:b+'|'+a}
+
 function publicUser(d, userId) {
-  const u = d.users.find(x => x.id === userId);
+  const u = lumoraIndex(d).usersById.get(userId);
   return u ? { id: u.id, username: u.username, name: u.name, avatarUrl: u.avatarUrl || '' } : { id: userId, username: 'Unknown', name: 'Unknown', avatarUrl: '' };
 }
-function isFollowing(d, followerId, followingId) { return d.follows.some(x => x.followerId === followerId && x.followingId === followingId); }
-function areFriends(d, a, b) { return d.friendships.some(x => (x.userA === a && x.userB === b) || (x.userA === b && x.userB === a)); }
+function isFollowing(d, followerId, followingId) { return lumoraIndex(d).follows.has(followerId+'|'+followingId); }
+function areFriends(d, a, b) { return lumoraIndex(d).friends.has(undirectedKey(a,b)); }
 function accountVisible(d, ownerId, viewer) {
   if (!viewer || ownerId === viewer.id) return true;
-  const owner = d.users.find(x => x.id === ownerId);
+  const owner = lumoraIndex(d).usersById.get(ownerId);
   if (!owner || (owner.accountPrivacy || 'public') === 'public') return true;
-  return isFollowing(d, viewer.id, ownerId) || areFriends(d, viewer.id, ownerId);
+  const i=lumoraIndex(d); return i.follows.has(viewer.id+'|'+ownerId) || i.friends.has(undirectedKey(viewer.id,ownerId));
 }
 function visibilityAllowed(d, visibility, ownerId, viewer) {
   if (ownerId === viewer.id) return true;
@@ -275,7 +293,7 @@ function bookStats(d, b, viewerId) {
   const favored=!!viewerId&&!!cache.favUsers.get(b.id)?.has(viewerId);
   return {reads,libraryAdds:library,favorites,favorited:favored};
 }
-function chapterReadCount(d, chapterId) { return d.chapterReads.filter(x => x.chapterId === chapterId).length; }
+function chapterReadCount(d, chapterId) { return lumoraIndex(d).chapterReads.get(chapterId)||0; }
 function publicBook(b, d, viewerId) {
   const stats = bookStats(d, b, viewerId);
   return {
@@ -421,7 +439,7 @@ function targetAllowed(d, type, targetId, u) {
   return null;
 }
 
-function socialCounts(d, userId) { return { followers:d.follows.filter(x=>x.followingId===userId).length, following:d.follows.filter(x=>x.followerId===userId).length, friends:d.friendships.filter(x=>x.userA===userId||x.userB===userId).length }; }
+function socialCounts(d, userId) { const i=lumoraIndex(d); return {followers:i.followersByUser.get(userId)?.size||0,following:i.followingByUser.get(userId)?.size||0,friends:i.friendsByUser.get(userId)?.size||0}; }
 function socialSummary(d,u) { return {notifications:d.notifications.filter(n=>n.userId===u.id&&!n.readAt).length,...socialCounts(d,u.id), followRequests:d.followRequests.filter(x=>x.toId===u.id&&x.status==='pending').length, friendRequests:d.friendRequests.filter(x=>x.toId===u.id&&x.status==='pending').length, messageRequests:d.messageRequests.filter(x=>x.toId===u.id&&x.status==='pending').length}; }
 function messagingAllowed(d,from,to) {
   if (areFriends(d,from.id,to.id)) return true;
@@ -605,7 +623,7 @@ async function api(req, res) {
   const u = requireUser(req, res);
   if (!u) return;
   const d = db();
-  cleanSocial(d); expirePosts(d); cleanupTrash(d);
+  // Scheduled maintenance handles consistency/archiving/trash cleanup; requests stay focused on the requested operation.
   for (const b of d.books) if (!Array.isArray(b.tags)) b.tags=[];
   for (const x of d.diaries) { if (x.weather===undefined) x.weather=''; if (x.season===undefined) x.season=''; }
 
