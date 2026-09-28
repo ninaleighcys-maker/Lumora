@@ -60,6 +60,7 @@ function db() {
   return normalizeDb(JSON.parse(fs.readFileSync(DB_FILE, 'utf8')));
 }
 function save(d) {
+  if (Object.prototype.hasOwnProperty.call(d,'__bookStatsCache')) delete d.__bookStatsCache;
   if (remotePool && remoteDb) {
     remoteDb = normalizeDb(d);
     const snapshot = JSON.parse(JSON.stringify(remoteDb));
@@ -255,10 +256,24 @@ function storyFont(value) {
   return allowed.includes(String(value || '')) ? String(value) : 'Roboto';
 }
 function bookStats(d, b, viewerId) {
-  const reads = Math.max(d.bookReads.filter(x => x.bookId === b.id).length, Number(b.readingCount||0));
-  const library = d.libraries.filter(x => x.bookId === b.id).reduce((set,x) => set.add(x.userId), new Set()).size;
-  const favorites = d.favorites.filter(x => x.bookId === b.id).reduce((set,x) => set.add(x.userId), new Set()).size;
-  return { reads, libraryAdds: library, favorites, favorited: !!viewerId && d.favorites.some(x => x.bookId === b.id && x.userId === viewerId) };
+  let cache=d.__bookStatsCache;
+  if(!cache){
+    const reads=new Map(), libraries=new Map(), favorites=new Map(), favoredByViewer=new Map();
+    for(const x of d.bookReads){if(x.bookId)reads.set(x.bookId,(reads.get(x.bookId)||0)+1);}
+    const libUsers=new Map();
+    for(const x of d.libraries){if(!x.bookId||!x.userId)continue;let set=libUsers.get(x.bookId);if(!set){set=new Set();libUsers.set(x.bookId,set);}set.add(x.userId);}
+    for(const [k,set] of libUsers)libraries.set(k,set.size);
+    const favUsers=new Map();
+    for(const x of d.favorites){if(!x.bookId||!x.userId)continue;let set=favUsers.get(x.bookId);if(!set){set=new Set();favUsers.set(x.bookId,set);}set.add(x.userId);}
+    for(const [k,set] of favUsers)favorites.set(k,set.size);
+    cache={reads,libraries,favorites,favUsers};
+    Object.defineProperty(d,'__bookStatsCache',{value:cache,writable:true,configurable:true,enumerable:false});
+  }
+  const reads=Math.max(cache.reads.get(b.id)||0,Number(b.readingCount||0));
+  const library=cache.libraries.get(b.id)||0;
+  const favorites=cache.favorites.get(b.id)||0;
+  const favored=!!viewerId&&!!cache.favUsers.get(b.id)?.has(viewerId);
+  return {reads,libraryAdds:library,favorites,favorited:favored};
 }
 function chapterReadCount(d, chapterId) { return d.chapterReads.filter(x => x.chapterId === chapterId).length; }
 function publicBook(b, d, viewerId) {
