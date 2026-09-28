@@ -892,7 +892,7 @@ async function api(req, res) {
       const c=b.chapters.find(x=>x.id===chapterId);if(!c)return send(res,404,{error:'Chapter not found.'});
       const pageNumber=b.chapters.findIndex(x=>x.id===chapterId)+1;
       const rp=d.readingProgress.find(x=>x.userId===u.id&&x.bookId===bookId);
-      if(rp){rp.chapterId=chapterId;rp.pageNumber=pageNumber;rp.scrollTop=0;rp.updatedAt=Date.now();} else d.readingProgress.push({id:id(),userId:u.id,bookId,chapterId,pageNumber,scrollTop:0,updatedAt:Date.now(),createdAt:Date.now()});
+      if(rp){if(rp.chapterId!==chapterId){rp.chapterId=chapterId;rp.pageNumber=pageNumber;rp.scrollTop=0;}rp.updatedAt=Date.now();} else d.readingProgress.push({id:id(),userId:u.id,bookId,chapterId,pageNumber,scrollTop:0,updatedAt:Date.now(),createdAt:Date.now()});
       if(!d.bookReads.some(x=>x.userId===u.id&&x.bookId===bookId)) d.bookReads.push({id:id(),userId:u.id,bookId,createdAt:Date.now()});
       if(!d.chapterReads.some(x=>x.userId===u.id&&x.bookId===bookId&&x.chapterId===chapterId)) d.chapterReads.push({id:id(),userId:u.id,bookId,chapterId,createdAt:Date.now()});
       save(d);
