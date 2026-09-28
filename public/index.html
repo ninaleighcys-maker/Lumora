@@ -121,8 +121,9 @@
 @media(max-width:700px){.profile-cover{min-height:270px}.profile-cover .profile-head{gap:12px;padding:16px}.profile-cover .profile-head .profile-bio{margin-top:7px}.crop-stage-wrap{min-height:240px}.crop-controls{flex-wrap:wrap}}
 .profile-favorites{margin-bottom:18px!important}.profile-archive{margin-top:0!important}
 /* Compact profile tabs and vertical profile grids */
-.profile-tabs{display:flex;justify-content:center;align-items:center;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:20px 0 18px}
-.profile-tab{min-width:78px;padding:12px 18px!important;border:0!important;border-radius:0!important;background:transparent!important;color:var(--muted);box-shadow:none!important;transform:none!important;font-size:20px;line-height:1;cursor:pointer}
+.profile-tabs{display:flex;justify-content:center;align-items:center;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:20px 0 18px;gap:2px}
+.profile-tab{min-width:72px;padding:12px 9px!important;border:0!important;border-radius:0!important;background:transparent!important;color:var(--muted);box-shadow:none!important;transform:none!important;font-size:20px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.profile-tab:not(:last-child)::after{content:'|';margin-left:18px;color:var(--muted);font-weight:400;opacity:.8}
 .profile-tab:hover{background:var(--accent3)!important;color:var(--text)}
 .profile-tab.active{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)!important}
 .profile-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
@@ -137,7 +138,7 @@
 .profile-private-section{margin-top:18px!important}
 @media(max-width:1100px){.profile-tab-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:900px){.profile-tab-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:650px){.profile-tabs{margin:16px 0 14px}.profile-tab{min-width:62px;padding:11px 13px!important;font-size:18px}.profile-tab-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.archive-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
+@media(max-width:650px){.profile-tabs{margin:16px 0 14px}.profile-tab{min-width:58px;padding:11px 7px!important;font-size:18px}.profile-tab:not(:last-child)::after{margin-left:12px}.profile-tab-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.archive-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
 @media(max-width:430px){.profile-tab-grid,.archive-grid{grid-template-columns:1fr}}
 </style></head><body><div id="app"></div><script>
 const app=document.getElementById('app');let me=null;let state={view:'news',data:null,book:null,chapter:null,chapterData:null,search:null,profile:null,highlightVisible:false,messageData:null,messageNotice:'',notificationCount:0,libraryBooks:[]};let readerSaveTimer=null;let lastReaderScroll=0;
