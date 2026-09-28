@@ -1101,10 +1101,17 @@ async function startServer() {
   databaseInitPromise=(async()=>{
     try {
       await initRemoteDatabase();
-      try { cleanSocial(db()); } catch (e) { console.error('Initial social normalization failed:', e.message); }
-      try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); }
+
+      // Mark the database ready as soon as the persistent state is loaded.
+      // Maintenance sweeps must never hold the whole app on the startup screen.
       databaseReady=true;
       console.log('Lumora database ready.');
+
+      // Run non-essential maintenance after the app is available.
+      setImmediate(()=>{
+        try { cleanSocial(db()); } catch (e) { console.error('Initial social normalization failed:', e.message); }
+        try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); }
+      });
     } catch (e) {
       databaseInitError=e;
       console.error('Lumora database initialization failed:', e);
