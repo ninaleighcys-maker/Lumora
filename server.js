@@ -84,6 +84,18 @@ async function initRemoteDatabase() {
     remoteDb = local;
     await remotePool.query('INSERT INTO lumora_state (id, data) VALUES (1, $1::jsonb)', [JSON.stringify(local)]);
   }
+  if (remotePool) {
+    try {
+      const migrationPath = path.join(__dirname, 'db', 'normalized-schema.sql');
+      if (fs.existsSync(migrationPath)) {
+        await remotePool.query(fs.readFileSync(migrationPath, 'utf8'));
+        console.log('Lumora normalized PostgreSQL schema is ready.');
+      }
+    } catch (e) {
+      console.error('Normalized PostgreSQL migration failed:', e.message);
+      throw e;
+    }
+  }
   console.log('Lumora is using managed PostgreSQL storage.');
 }
 async function closeRemoteDatabase() {
