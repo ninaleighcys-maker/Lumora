@@ -119,7 +119,25 @@
 .image-lightbox{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.76);display:flex;align-items:center;justify-content:center;padding:24px;cursor:zoom-out}
 .image-lightbox img{max-width:94vw;max-height:90vh;width:auto;height:auto;object-fit:contain;border-radius:18px;box-shadow:0 20px 70px rgba(0,0,0,.45)}
 @media(max-width:700px){.profile-cover{min-height:270px}.profile-cover .profile-head{gap:12px;padding:16px}.profile-cover .profile-head .profile-bio{margin-top:7px}.crop-stage-wrap{min-height:240px}.crop-controls{flex-wrap:wrap}}
-.profile-favorites{margin-bottom:18px!important}.profile-archive{margin-top:0!important}</style></head><body><div id="app"></div><script>
+.profile-favorites{margin-bottom:18px!important}.profile-archive{margin-top:0!important}
+/* Compact profile tabs and vertical profile grids */
+.profile-tabs{display:flex;justify-content:center;align-items:center;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin:22px 0 18px}
+.profile-tab{min-width:78px;padding:12px 18px!important;border:0!important;border-radius:0!important;background:transparent!important;color:var(--muted);box-shadow:none!important;transform:none!important;font-size:20px;line-height:1}
+.profile-tab:hover{background:var(--accent3)!important;color:var(--text)}
+.profile-tab.active{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)!important}
+.profile-tab-content{margin-bottom:18px}.profile-tab-section{margin:0 0 14px!important}
+.profile-tab-section .home-section-head{margin-bottom:12px}.profile-tab-section .home-section-head h2,.profile-tab-section .home-section-head>div>p{display:none}
+.profile-tab-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px;align-items:stretch}
+.profile-tab-grid>.card{min-width:0;height:100%}.profile-tab-grid .empty{grid-column:1/-1}
+.profile-tab-grid .grid{display:grid;grid-template-columns:inherit;gap:inherit}
+.profile-tabs+.profile-tab-content .result-section{margin:0 0 14px}.profile-tabs+.profile-tab-content .result-section>h2{display:none}.profile-tabs+.profile-tab-content .result-section>.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px}
+.profile-favorites{margin-bottom:12px!important}.profile-archive{margin-top:0!important}
+.archive-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;padding:4px 2px 12px}
+@media(max-width:1100px){.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:900px){.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid{grid-template-columns:repeat(3,minmax(0,1fr))}.archive-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.profile-tabs{margin:18px 0 14px}.profile-tab{min-width:62px;padding:11px 13px!important;font-size:18px}.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.archive-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
+@media(max-width:430px){.profile-tab-grid,.profile-tabs+.profile-tab-content .result-section>.grid,.archive-grid{grid-template-columns:1fr}}
+</style></head><body><div id="app"></div><script>
 const app=document.getElementById('app');let me=null;let state={view:'news',data:null,book:null,chapter:null,chapterData:null,search:null,profile:null,highlightVisible:false,messageData:null,messageNotice:'',notificationCount:0,libraryBooks:[]};let readerSaveTimer=null;let lastReaderScroll=0;
 const GENRES=['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
 const WEATHER=[['☀️','Sunny'],['🌧️','Rainy'],['⛅','Cloudy'],['🌩️','Stormy'],['🌫️','Foggy'],['❄️','Snowy'],['🌙','Clear Night'],['🌬️','Windy']];
@@ -422,4 +440,169 @@ function editPost(id){const p=state.data.posts.find(x=>x.id===id);newPost(p)}
 function esc(s=''){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function attr(s=''){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/'/g,'&#39;')}
 start().catch(e=>{console.error(e);auth()});
-</script></body></html>
+</script>
+<script>
+(function(){
+  const originalProfile=window.profile;
+  const originalUserPage=window.userPage;
+  const tabDefs=[["books","📚","Books"],["diary","📔","Diary"],["thoughts","💭","Thoughts"],["reposts","🔁","Reposts"]];
+
+  function makeTabs(active, publicMode){
+    const wrap=document.createElement("div");
+    wrap.className="profile-tabs";
+    wrap.setAttribute("role","tablist");
+    wrap.setAttribute("aria-label","Profile content");
+    tabDefs.forEach(function(t){
+      const b=document.createElement("button");
+      b.className="profile-tab"+(active===t[0]?" active":"");
+      b.type="button";b.setAttribute("role","tab");b.setAttribute("aria-label",t[2]);b.setAttribute("aria-selected",String(active===t[0]));
+      b.textContent=t[1];
+      b.onclick=function(){if(publicMode)selectPublicTab(t[0]);else selectOwnTab(t[0]);};
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+
+  function findOwnSections(){
+    const out={};
+    document.querySelectorAll("section.profile-content").forEach(function(sec){
+      const text=(sec.querySelector("h2")?.textContent||"").toLowerCase();
+      if(text.includes("my books"))out.books=sec;
+      else if(text.includes("my diaries"))out.diary=sec;
+      else if(text.includes("my shared thoughts"))out.thoughts=sec;
+      else if(text.includes("my reposts"))out.reposts=sec;
+      else if(text.includes("my favorites"))out.favorites=sec;
+      else if(text.includes("archive thoughts"))out.archive=sec;
+    });
+    return out;
+  }
+
+  function compactSection(sec){
+    if(!sec)return;
+    sec.classList.add("profile-tab-section");
+    const h=sec.querySelector("h2");if(h)h.style.display="none";
+    const desc=h&&h.parentElement?h.parentElement.querySelector("p"):null;if(desc)desc.style.display="none";
+    sec.querySelectorAll(".empty").forEach(function(e){e.textContent="No entry yet";});
+    const grid=sec.querySelector(".profile-grid");if(grid)grid.classList.add("profile-tab-grid");
+  }
+
+  function prepareOwnTabs(){
+    const map=findOwnSections(); if(!map.books)return;
+    Object.keys(map).forEach(function(k){if(["books","diary","thoughts","reposts"].includes(k))compactSection(map[k]);});
+    const anchor=map.books;
+    const parent=anchor.parentElement;
+    const content=document.createElement("section");
+    content.id="profileTabContent";content.className="profile-tab-content";
+    [map.books,map.diary,map.thoughts,map.reposts].forEach(function(sec){if(sec)content.appendChild(sec);});
+    const tabs=makeTabs(state.profileTab||"books",false);
+    parent.insertBefore(tabs,content.parentNode===parent?anchor:tabs);
+    parent.insertBefore(content,anchor);
+    if(map.favorites&&map.archive){
+      if(map.favorites.parentElement===parent&&map.archive.parentElement===parent){
+        parent.insertBefore(map.favorites,map.archive);
+        map.favorites.classList.add("profile-favorites");
+        map.archive.classList.add("profile-archive");
+      }
+    }
+    showOwnTab(state.profileTab||"books",content);
+  }
+
+  function showOwnTab(tab,content){
+    const sections={};
+    content.querySelectorAll(".profile-tab-section").forEach(function(sec){
+      const text=(sec.querySelector(".home-section-head")?.textContent||"").toLowerCase();
+      if(sec.querySelector(".book-cover")||text.includes("write a book"))sections.books=sec;
+      if(text.includes("write in diary")||sec.querySelector(".diary-body"))sections.diary=sec;
+      if(text.includes("share a thought"))sections.thoughts=sec;
+      if(text.includes("reposts")||text.includes("public thoughts you have reposted"))sections.reposts=sec;
+    });
+    // Fallback by original order if text is hidden.
+    const arr=[...content.querySelectorAll(".profile-tab-section")];
+    if(!sections.books)sections.books=arr[0];
+    if(!sections.diary)sections.diary=arr[1];
+    if(!sections.thoughts)sections.thoughts=arr[2];
+    if(!sections.reposts)sections.reposts=arr[3];
+    Object.keys(sections).forEach(function(k){if(sections[k])sections[k].style.display=k===tab?"block":"none";});
+  }
+
+  window.selectOwnTab=function(tab){
+    if(!tabDefs.some(function(t){return t[0]===tab;}))tab="books";
+    state.profileTab=tab;
+    const tabs=document.querySelectorAll(".profile-tabs .profile-tab");
+    tabs.forEach(function(b){const active=b.getAttribute("aria-label").toLowerCase()===(tab==="diary"?"diary":tab==="thoughts"?"thoughts":tab==="reposts"?"reposts":"books");b.classList.toggle("active",active);b.setAttribute("aria-selected",String(active));});
+    const c=document.getElementById("profileTabContent");if(c)showOwnTab(tab,c);
+  };
+
+  function findPublicSections(){
+    const out={};
+    document.querySelectorAll(".result-section").forEach(function(sec){
+      const text=(sec.querySelector("h2")?.textContent||"").toLowerCase();
+      if(text==="books")out.books=sec;
+      else if(text==="diaries")out.diary=sec;
+      else if(text==="posts")out.thoughts=sec;
+      else if(text==="reposts")out.reposts=sec;
+    });
+    return out;
+  }
+
+  function preparePublicTabs(){
+    const x=state.profile;if(!x||!x.user)return;
+    const blocked=x.user.accountPrivacy==="private"&&!(x.relationship?.following||x.relationship?.friends);
+    if(blocked)return;
+    const map=findPublicSections();
+    if(!map.books)return;
+    Object.values(map).forEach(function(sec){if(sec){const g=sec.querySelector(".grid");if(g)g.classList.add("profile-tab-grid");}});
+    if(!map.reposts&&Array.isArray(x.reposts)){
+      const sec=document.createElement("div");sec.className="result-section";
+      const grid=document.createElement("div");grid.className="grid profile-tab-grid";
+      sec.innerHTML="<h2>Reposts</h2>";sec.appendChild(grid);
+      (x.reposts||[]).forEach(function(r){
+        const p=r.post;if(!p)return;
+        const card=document.createElement("div");card.className="card own-content-card";
+        card.innerHTML='<p class="muted small">↻ Reposted from @'+esc(p.author?.username||"user")+'</p><p class="post-body">'+esc(p.content||"")+'</p><button class="secondary" onclick="openPost(\''+attr(p.id)+'\')">Open</button>';
+        grid.appendChild(card);
+      });
+      map.books.parentElement.appendChild(sec);map.reposts=sec;
+    }
+    Object.values(map).forEach(function(sec){if(sec){const h=sec.querySelector("h2");if(h)h.style.display="none";sec.style.margin="0 0 14px";sec.querySelectorAll(".empty").forEach(function(e){e.textContent="No entry yet";});}});
+    const parent=map.books.parentElement;
+    const anchor=map.books;
+    const content=document.createElement("section");content.id="publicProfileTabContent";content.className="profile-tab-content";
+    [map.books,map.diary,map.thoughts,map.reposts].forEach(function(sec){if(sec)content.appendChild(sec);});
+    parent.insertBefore(makeTabs(state.userProfileTab||"books",true),anchor);
+    parent.insertBefore(content,anchor);
+    showPublicTab(state.userProfileTab||"books",content);
+  }
+
+  function showPublicTab(tab,content){
+    [...content.querySelectorAll(".result-section")].forEach(function(sec){sec.style.display="none";});
+    const order=[...content.querySelectorAll(".result-section")];
+    const idx={books:0,diary:1,thoughts:2,reposts:3}[tab]??0;
+    if(order[idx])order[idx].style.display="block";
+  }
+
+  window.selectPublicTab=function(tab){
+    if(!tabDefs.some(function(t){return t[0]===tab;}))tab="books";
+    state.userProfileTab=tab;
+    document.querySelectorAll(".profile-tabs .profile-tab").forEach(function(b){b.classList.toggle("active",b.getAttribute("aria-label").toLowerCase()===(tab==="diary"?"diary":tab==="thoughts"?"thoughts":tab==="reposts"?"reposts":"books"));});
+    const c=document.getElementById("publicProfileTabContent");if(c)showPublicTab(tab,c);
+  };
+
+  window.profile=async function(){
+    const r=await originalProfile();
+    const old=state.profileTab||"books";state.profileTab=old;
+    prepareOwnTabs();
+    return r;
+  };
+
+  window.userPage=function(){
+    const r=originalUserPage();
+    if(r&&typeof r.then==="function")return r.then(function(){preparePublicTabs();return r;});
+    preparePublicTabs();return r;
+  };
+
+  // No tagged-content tab is created because the existing app has mentions but no distinct
+  // saved/tagged-content collection to safely expose as a profile tab.
+})();
+</script>
+</body></html>
