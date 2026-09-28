@@ -27,6 +27,9 @@ const DATABASE_URL = process.env.DATABASE_URL || '';
 let remotePool = null;
 let remoteDb = null;
 let remoteSaveQueue = Promise.resolve();
+let databaseInitPromise = null;
+let databaseReady = false;
+let databaseInitError = null;
 
 const EMPTY_DB = {
   users: [], sessions: [], emailVerifications: [], passwordResets: [], books: [], diaries: [],
@@ -74,7 +77,7 @@ function save(d) {
 }
 async function initRemoteDatabase() {
   if (!DATABASE_URL) return;
-  remotePool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 });
+  remotePool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5, connectionTimeoutMillis: 10000, idleTimeoutMillis: 30000 });
   await remotePool.query(`CREATE TABLE IF NOT EXISTS lumora_state (id INTEGER PRIMARY KEY, data JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`);
   const result = await remotePool.query('SELECT data FROM lumora_state WHERE id = 1');
   if (result.rows.length) {
@@ -1065,13 +1068,23 @@ async function api(req, res) {
 }
 
 async function startServer() {
-  await initRemoteDatabase();
-  try { cleanSocial(db()); } catch (e) { console.error('Initial social normalization failed:', e.message); }
-  setInterval(()=>{try{cleanupTrash(db())}catch(e){console.error('Trash cleanup failed:',e.message)}}, 60*60*1000);
-
   const server=http.createServer(async(req,res)=>{
     try {
-      if(req.url.startsWith('/api/')) return await api(req,res);
+      if(req.url === '/api/health') {
+        return send(res, databaseReady ? 200 : 503, {
+          ok: databaseReady,
+          databaseReady,
+          error: databaseInitError ? 'Database initialization is not ready.' : null
+        });
+      }
+      if(req.url.startsWith('/api/')) {
+        try {
+          if(databaseInitPromise) await databaseInitPromise;
+        } catch (e) {
+          return send(res,503,{error:'Lumora is still starting. Please try again in a moment.',code:'STARTUP_DATABASE_UNAVAILABLE'});
+        }
+        return await api(req,res);
+      }
       const pageUrl = new URL(req.url,`http://${req.headers.host}`);
       if(pageUrl.pathname === '/verify-email') return handleEmailVerificationLink(req, res, pageUrl);
       if(pageUrl.pathname === '/reset-password') { res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}); return res.end(passwordResetPage(pageUrl.searchParams.get('token') || '')); }
@@ -1083,9 +1096,24 @@ async function startServer() {
       res.writeHead(200,{'Content-Type':types[ext]||'application/octet-stream', ...(ext === '.html' ? {'Cache-Control':'no-store'} : {})});fs.createReadStream(file).pipe(res);
     }catch(e){console.error(e);send(res,500,{error:'Server error.'});}
   });
-  try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); }
-  setInterval(()=>{ try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); } }, 60 * 1000);
   server.listen(PORT,()=>console.log(`Lumora running at http://localhost:${PORT}`));
+
+  databaseInitPromise=(async()=>{
+    try {
+      await initRemoteDatabase();
+      try { cleanSocial(db()); } catch (e) { console.error('Initial social normalization failed:', e.message); }
+      try { expirePosts(db()); } catch (e) { console.error('Archive sweep failed:', e.message); }
+      databaseReady=true;
+      console.log('Lumora database ready.');
+    } catch (e) {
+      databaseInitError=e;
+      console.error('Lumora database initialization failed:', e);
+      throw e;
+    }
+  })();
+
+  setInterval(()=>{if(databaseReady){try{cleanupTrash(db())}catch(e){console.error('Trash cleanup failed:',e.message)} }},60*60*1000);
+  setInterval(()=>{if(databaseReady){try{expirePosts(db())}catch(e){console.error('Archive sweep failed:',e.message)} }},60*1000);
 }
 startServer().catch(e=>{ console.error('Lumora startup failed:', e); process.exit(1); });
 process.on('SIGTERM', async()=>{ try{await remoteSaveQueue; await closeRemoteDatabase();}finally{process.exit(0);} });
