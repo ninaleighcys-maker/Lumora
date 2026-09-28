@@ -778,6 +778,19 @@ async function api(req, res) {
     save(d); return send(res,200,{user:safeUser(current)});
   }
 
+  if (req.method === 'GET' && /^\/api\/users\/[^/]+\/people\/(followers|following|friends)$/.test(p)) {
+    const parts=p.split('/').filter(Boolean);
+    const profileId=parts[2];
+    const type=parts[4];
+    const profile=d.users.find(x=>x.id===profileId);
+    if(!profile)return send(res,404,{error:'User not found.'});
+    if(!accountVisible(d,profileId,u))return send(res,403,{error:'This user’s Following, Followers, and Friends lists are private.',code:'SOCIAL_LIST_PRIVATE'});
+    let ids=[];
+    if(type==='followers') ids=d.follows.filter(x=>x.followingId===profileId).map(x=>x.followerId);
+    else if(type==='following') ids=d.follows.filter(x=>x.followerId===profileId).map(x=>x.followingId);
+    else ids=d.friendships.filter(x=>x.userA===profileId||x.userB===profileId).map(x=>x.userA===profileId?x.userB:x.userA);
+    return send(res,200,{type,user:publicUser(d,profileId),people:ids.map(x=>publicUser(d,x))});
+  }
   if (req.method === 'GET' && p.startsWith('/api/users/')) {
     const userId=p.split('/').pop(); const profile=d.users.find(x=>x.id===userId);
     if(!profile) return send(res,404,{error:'User not found.'});
@@ -799,19 +812,6 @@ async function api(req, res) {
     return send(res,200,{type,people:ids.map(x=>publicUser(d,x))});
   }
 
-  if (req.method === 'GET' && /^\/api\/users\/[^/]+\/people\/(followers|following|friends)$/.test(p)) {
-    const parts=p.split('/').filter(Boolean);
-    const profileId=parts[2];
-    const type=parts[4];
-    const profile=d.users.find(x=>x.id===profileId);
-    if(!profile)return send(res,404,{error:'User not found.'});
-    if(!accountVisible(d,profileId,u))return send(res,403,{error:'This user’s Following, Followers, and Friends lists are private.',code:'SOCIAL_LIST_PRIVATE'});
-    let ids=[];
-    if(type==='followers') ids=d.follows.filter(x=>x.followingId===profileId).map(x=>x.followerId);
-    else if(type==='following') ids=d.follows.filter(x=>x.followerId===profileId).map(x=>x.followingId);
-    else ids=d.friendships.filter(x=>x.userA===profileId||x.userB===profileId).map(x=>x.userA===profileId?x.userB:x.userA);
-    return send(res,200,{type,user:publicUser(d,profileId),people:ids.map(x=>publicUser(d,x))});
-  }
   if (req.method === 'GET' && p === '/api/social') {
     return send(res,200,{...socialSummary(d,u),followRequests:d.followRequests.filter(x=>x.toId===u.id&&x.status==='pending').map(x=>({...x,from:publicUser(d,x.fromId)})),friendRequests:d.friendRequests.filter(x=>x.toId===u.id&&x.status==='pending').map(x=>({...x,from:publicUser(d,x.fromId)})),messageRequests:d.messageRequests.filter(x=>x.toId===u.id&&x.status==='pending').map(x=>({...x,from:publicUser(d,x.fromId),message:x.message}))});
   }
