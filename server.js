@@ -327,7 +327,7 @@ function createPasswordReset(d, u) {
     tokenHash,
     codeHash,
     userId: u.id,
-    codeExpiresAt: Date.now() + 10 * 60 * 1000,
+    codeExpiresAt: Date.now() + 5 * 60 * 1000,
     expiresAt: Date.now() + 15 * 60 * 1000,
     codeVerifiedAt: null,
     usedAt: null
@@ -348,7 +348,7 @@ async function sendPasswordResetEmail(u, code) {
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: u.email,
     subject: 'Your Lumora password reset code',
-    text: `We received a request to reset your Lumora password. Your 6-digit verification code is: ${code}\n\nThis code expires in 10 minutes. If you did not request this, you can ignore this email.`,
+    text: `We received a request to reset your Lumora password. Your 6-digit verification code is: ${code}\n\nThis code expires in 5 minutes. If you did not request this, you can ignore this email.`,
     html: `<p>We received a request to reset your Lumora password.</p><p>Your 6-digit verification code is:</p><p style="font-size:32px;font-weight:700;letter-spacing:8px"><b>${code}</b></p><p>This code expires in <b>10 minutes</b>. If you did not request this, you can ignore this email.</p>`
   });
   return { delivered: true };
