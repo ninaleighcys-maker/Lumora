@@ -211,9 +211,10 @@ function lumoraIndex(d){
 }
 function undirectedKey(a,b){return a<b?a+'|'+b:b+'|'+a}
 
-function publicUser(d, userId) {
+function publicUser(d, userId, includeAvatar = true) {
   const u = lumoraIndex(d).usersById.get(userId);
-  return u ? { id: u.id, username: u.username, name: u.name, avatarUrl: u.avatarUrl || '' } : { id: userId, username: 'Unknown', name: 'Unknown', avatarUrl: '' };
+  if (!u) return { id: userId, username: 'Unknown', name: 'Unknown', ...(includeAvatar ? { avatarUrl: '' } : {}) };
+  return { id: u.id, username: u.username, name: u.name, ...(includeAvatar ? { avatarUrl: u.avatarUrl || '' } : {}) };
 }
 function isFollowing(d, followerId, followingId) { return lumoraIndex(d).follows.has(followerId+'|'+followingId); }
 function areFriends(d, a, b) { return lumoraIndex(d).friends.has(undirectedKey(a,b)); }
@@ -299,23 +300,23 @@ function bookStats(d, b, viewerId) {
   return {reads,libraryAdds:library,favorites,favorited:favored};
 }
 function chapterReadCount(d, chapterId) { return lumoraIndex(d).chapterReads.get(chapterId)||0; }
-function publicBook(b, d, viewerId) {
+function publicBook(b, d, viewerId, includeAvatar = true) {
   const stats = bookStats(d, b, viewerId);
   return {
     id: b.id, userId: b.userId, title: b.title, description: b.description, cover: b.cover,
     genre: b.genre, tags: Array.isArray(b.tags) ? b.tags : [], visibility: b.visibility, readingCount: stats.reads,
     fontFamily: storyFont(b.fontFamily), stats,
-    createdAt: b.createdAt, updatedAt: b.updatedAt, author: publicUser(d, b.userId),
+    createdAt: b.createdAt, updatedAt: b.updatedAt, author: publicUser(d, b.userId, includeAvatar),
     chapters: b.chapters.map(c => ({ id: c.id, title: c.title, readCount: chapterReadCount(d, c.id) }))
   };
 }
-function publicBookSummary(b, d, viewerId) {
+function publicBookSummary(b, d, viewerId, includeAvatar = true) {
   const stats = bookStats(d, b, viewerId);
   return { id:b.id, userId:b.userId, title:b.title, description:b.description, cover:b.cover, genre:b.genre, tags:Array.isArray(b.tags)?b.tags:[], visibility:b.visibility, readingCount:stats.reads, fontFamily:storyFont(b.fontFamily), stats, createdAt:b.createdAt, updatedAt:b.updatedAt, author:publicUser(d,b.userId) };
 }
-function publicPost(p,d,viewerId=null){const idx=lumoraIndex(d),lk=idx.likesByTarget.get('post|'+p.id)||{count:0,users:new Set()};return {...p,author:publicUser(d,p.userId),commentCount:idx.commentsByTarget.get('post|'+p.id)||0,likesCount:lk.count,liked:!!viewerId&&lk.users.has(viewerId),reposted:!!viewerId&&idx.repostsByUserPost.has(viewerId+'|'+p.id),mentions:publicMentions(d,p.mentionUserIds)};}
-function publicDiary(x,d,viewerId=null){const idx=lumoraIndex(d),lk=idx.likesByTarget.get('diary|'+x.id)||{count:0,users:new Set()};return {...x,author:publicUser(d,x.userId),commentCount:idx.commentsByTarget.get('diary|'+x.id)||0,likesCount:lk.count,liked:!!viewerId&&lk.users.has(viewerId),mentions:publicMentions(d,x.mentionUserIds)};}
-function publicComment(c,d){return {...c,parentId:c.parentId||null,author:publicUser(d,c.userId),mentions:publicMentions(d,c.mentionUserIds)};}function publicRepost(r,d,viewerId=null){const p=d.posts.find(x=>x.id===r.postId&&!x.deletedAt&&x.visibility==='public');return p?{id:r.id,createdAt:r.createdAt,post:publicPost(p,d,viewerId),reposter:publicUser(d,r.userId)}:null;}
+function publicPost(p,d,viewerId=null,includeAvatar=true){const idx=lumoraIndex(d),lk=idx.likesByTarget.get('post|'+p.id)||{count:0,users:new Set()};return {...p,author:publicUser(d,p.userId,includeAvatar),commentCount:idx.commentsByTarget.get('post|'+p.id)||0,likesCount:lk.count,liked:!!viewerId&&lk.users.has(viewerId),reposted:!!viewerId&&idx.repostsByUserPost.has(viewerId+'|'+p.id),mentions:publicMentions(d,p.mentionUserIds)};}
+function publicDiary(x,d,viewerId=null,includeAvatar=true){const idx=lumoraIndex(d),lk=idx.likesByTarget.get('diary|'+x.id)||{count:0,users:new Set()};return {...x,author:publicUser(d,x.userId,includeAvatar),commentCount:idx.commentsByTarget.get('diary|'+x.id)||0,likesCount:lk.count,liked:!!viewerId&&lk.users.has(viewerId),mentions:publicMentions(d,x.mentionUserIds)};}
+function publicComment(c,d){return {...c,parentId:c.parentId||null,author:publicUser(d,c.userId),mentions:publicMentions(d,c.mentionUserIds)};}function publicRepost(r,d,viewerId=null,includeAvatar=true){const p=d.posts.find(x=>x.id===r.postId&&!x.deletedAt&&x.visibility==='public');return p?{id:r.id,createdAt:r.createdAt,post:publicPost(p,d,viewerId,includeAvatar),reposter:publicUser(d,r.userId,includeAvatar)}:null;}
 function publicChapter(c) { return { id: c.id, title: c.title, content: c.content || '', contentHtml: sanitizeStoryHtml(c.contentHtml || '') }; }
 const GENRES = ['Romance','New-Adult','R-18','Historical','Horror','Thriller','Sci-fi','Comedy','Action','RomCom','Drama','Apocalyptic','Mystery Thriller','Self-Help','CookBook','Travel','Fantasy'];
 function cleanTags(value) {
@@ -650,13 +651,13 @@ async function api(req, res) {
 
   if (req.method === 'GET' && p === '/api/dashboard') {
     return send(res, 200, {
-      user: safeUser(u),
+      user: { ...safeUser(u), avatarUrl: '', coverUrl: '' },
       books: d.books.filter(b => b.userId === u.id && !b.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt).map(b => ({...b, tags: Array.isArray(b.tags)?b.tags:[], stats: bookStats(d,b,u.id), fontFamily: storyFont(b.fontFamily)})),
-      diaries: d.diaries.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt),
-      posts: d.posts.filter(x => x.userId === u.id && !x.deletedAt && !x.archivedAt).sort((a,b) => b.createdAt-a.createdAt).map(p => publicPost(p,d,u.id)),      archivedPosts: d.posts.filter(x => x.userId === u.id && !x.deletedAt && !!x.archivedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d,u.id)),
-      libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
+      diaries: d.diaries.filter(x => x.userId === u.id && !x.deletedAt).sort((a,b) => b.updatedAt-a.updatedAt).map(x => publicDiary(x,d,u.id,false)),
+      posts: d.posts.filter(x => x.userId === u.id && !x.deletedAt && !x.archivedAt).sort((a,b) => b.createdAt-a.createdAt).map(p => publicPost(p,d,u.id,false)),      archivedPosts: d.posts.filter(x => x.userId === u.id && !x.deletedAt && !!x.archivedAt).sort((a,b) => b.archivedAt-a.archivedAt).map(p => publicPost(p,d,u.id)),
+      libraryBooks: d.libraries.filter(x => x.userId === u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id,false),addedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>b.addedAt-a.addedAt),
       continueReading: d.readingProgress.filter(x=>x.userId===u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id), chapterId:x.chapterId, pageNumber:x.pageNumber, progressUpdatedAt:x.updatedAt} : null; }).filter(Boolean).sort((a,b)=>(b.progressUpdatedAt||0)-(a.progressUpdatedAt||0)),
-      favorites: d.favorites.filter(x=>x.userId===u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id), favorited:true, favoritedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>(b.favoritedAt||0)-(a.favoritedAt||0)),      reposts: d.reposts.filter(x=>x.userId===u.id).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(x=>publicRepost(x,d,u.id)).filter(Boolean),
+      favorites: d.favorites.filter(x=>x.userId===u.id).map(x => { const b=lumoraIndex(d).booksById.get(x.bookId); return b && !b.deletedAt ? {...publicBookSummary(b,d,u.id), favorited:true, favoritedAt:x.createdAt} : null; }).filter(Boolean).sort((a,b)=>(b.favoritedAt||0)-(a.favoritedAt||0)),      reposts: d.reposts.filter(x=>x.userId===u.id).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0)).map(x=>publicRepost(x,d,u.id,false)).filter(Boolean),
       social: socialSummary(d,u)
     });
   }
