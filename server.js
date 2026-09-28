@@ -228,7 +228,7 @@ function syncFriendshipsFromFollows(d){
 function cleanSocial(d) {
   let changed=false;
   for (const u of d.users) { if (!u.accountPrivacy) { u.accountPrivacy = 'public'; changed=true; } if (!u.messagePermission) { u.messagePermission = 'everyone'; changed=true; } }
-  for (const k of ['follows','followRequests','friendRequests','friendships','messages','messageRequests','readingProgress','libraries','favorites','bookReads','chapterReads']) if (!Array.isArray(d[k])) { d[k] = []; changed=true; }
+  for (const k of ['follows','followRequests','friendRequests','friendships','messages','messageRequests','readingProgress','libraries','favorites','reposts','likes','bookReads','chapterReads']) if (!Array.isArray(d[k])) { d[k] = []; changed=true; }
   if(syncAllMutualFriendships(d)) changed=true;
   if(syncFriendshipsFromFollows(d)) changed=true;
   if(changed) save(d);
@@ -675,7 +675,7 @@ async function api(req, res) {
     const u=requireUser(req,res); if(!u)return;
     const username=String(url.searchParams.get('username')||'').trim().toLowerCase();
     if(!/^[a-z0-9_]{3,25}$/.test(username))return send(res,200,{available:false,reason:'Username must be 3-25 characters using letters, numbers, or underscores.'});
-    const taken=d.users.some(item=>item.username===username&&item.id!==u.id);
+    const taken=[...lumoraIndex(d).usersById.values()].some(item=>item.username===username&&item.id!==u.id);
     return send(res,200,{available:!taken,reason:taken?'Username already taken.':'Username available.'});
   }
 
@@ -777,11 +777,17 @@ async function api(req, res) {
   if (req.method === 'POST' && p.startsWith('/api/follow-requests/') && p.endsWith('/decline')) { const rid=p.split('/')[3]; const r=d.followRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Follow request not found.'}); r.status='declined'; save(d); return send(res,200,{ok:true}); }
   if (req.method === 'GET' && p === '/api/messages') {
     const byUser=new Map();
-    for(const m of d.messages){const otherId=m.fromId===u.id?m.toId:m.toId===u.id?m.fromId:null;if(!otherId)continue;const prev=byUser.get(otherId);if(!prev||Number(m.createdAt||0)>Number(prev.createdAt||0))byUser.set(otherId,m);}
-    const conversations=[...byUser.entries()].sort((a,b)=>Number(b[1].createdAt||0)-Number(a[1].createdAt||0)).map(([otherId,lastMessage])=>({user:publicUser(d,otherId),lastMessage,unreadCount:d.messages.filter(m=>m.fromId===otherId&&m.toId===u.id&&!m.readAt).length}));
+    for(const m of d.messages){
+      const otherId=m.fromId===u.id?m.toId:m.toId===u.id?m.fromId:null;if(!otherId)continue;
+      let entry=byUser.get(otherId);
+      if(!entry){entry={lastMessage:m,unreadCount:0};byUser.set(otherId,entry);}
+      else if(Number(m.createdAt||0)>Number(entry.lastMessage.createdAt||0))entry.lastMessage=m;
+      if(m.fromId===otherId&&m.toId===u.id&&!m.readAt)entry.unreadCount++;
+    }
+    const conversations=[...byUser.entries()].sort((a,b)=>Number(b[1].lastMessage.createdAt||0)-Number(a[1].lastMessage.createdAt||0)).map(([otherId,entry])=>({user:publicUser(d,otherId),lastMessage:entry.lastMessage,unreadCount:entry.unreadCount}));
     return send(res,200,{conversations});
   }
-  if (req.method === 'GET' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const existingConversation=d.messages.some(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)); const allowed=messagingAllowed(d,u,other)||existingConversation; if(!allowed)return send(res,403,{error:'Messaging is not open between you yet. Send a message request instead.'}); const messages=d.messages.filter(x=>(x.fromId===u.id&&x.toId===otherId)||(x.fromId===otherId&&x.toId===u.id)).sort((a,b)=>a.createdAt-b.createdAt); let changed=false; for(const m of messages){if(m.toId===u.id&&!m.readAt){m.readAt=Date.now();changed=true;}} if(changed)save(d); return send(res,200,{messages:messages.map(x=>({...x,from:publicUser(d,x.fromId)})),user:publicUser(d,otherId)}); }
+  if (req.method === 'GET' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=lumoraIndex(d).usersById.get(otherId); if(!other)return send(res,404,{error:'User not found.'}); const pair=undirectedKey(u.id,otherId),messages=[...(lumoraIndex(d).messagesByPair.get(pair)||[])].sort((a,b)=>a.createdAt-b.createdAt); const existingConversation=messages.length>0; const allowed=messagingAllowed(d,u,other)||existingConversation; if(!allowed)return send(res,403,{error:'Messaging is not open between you yet. Send a message request instead.'}); let changed=false; for(const m of messages){if(m.toId===u.id&&!m.readAt){m.readAt=Date.now();changed=true;}} if(changed)save(d); return send(res,200,{messages:messages.map(x=>({...x,from:publicUser(d,x.fromId)})),user:publicUser(d,otherId)}); }
   if (req.method === 'POST' && p.startsWith('/api/messages/')) { const otherId=p.split('/').pop(); const other=d.users.find(x=>x.id===otherId); if(!other)return send(res,404,{error:'User not found.'}); const x=await body(req); const content=String(x.content||'').trim().slice(0,3000); const clientMessageId=String(x.clientMessageId||'').trim().slice(0,120); if(!content)return send(res,400,{error:'Message cannot be empty.'}); if(clientMessageId){const duplicate=d.messages.find(m=>m.fromId===u.id&&m.toId===otherId&&m.clientMessageId===clientMessageId);if(duplicate)return send(res,200,{message:{...duplicate,from:publicUser(d,u.id)},request:false,duplicate:true});} const existingConversation=d.messages.some(m=>(m.fromId===u.id&&m.toId===otherId)||(m.fromId===otherId&&m.toId===u.id)); if(messagingAllowed(d,u,other)||existingConversation){const m={id:id(),fromId:u.id,toId:otherId,content,clientMessageId:clientMessageId||null,createdAt:Date.now(),readAt:null};d.messages.push(m);notify(d,otherId,'message',u.id,(u.name||'@'+u.username)+' sent you a message.','user',u.id);save(d);return send(res,201,{message:{...m,from:publicUser(d,u.id)},request:false});} if((other.messagePermission||'everyone')==='none')return send(res,403,{error:'This user is not accepting message requests from strangers.'}); const duplicateRequest=clientMessageId&&d.messageRequests.find(r=>r.fromId===u.id&&r.toId===otherId&&r.clientMessageId===clientMessageId&&r.status==='pending'); if(duplicateRequest)return send(res,200,{request:true,messageRequest:duplicateRequest,duplicate:true}); const mr={id:id(),fromId:u.id,toId:otherId,message:content,clientMessageId:clientMessageId||null,status:'pending',createdAt:Date.now()}; d.messageRequests.push(mr); notify(d,otherId,'message',u.id,u.name||'@'+u.username+' sent you a message request.','user',u.id); save(d); return send(res,201,{request:true,messageRequest:{...mr,from:publicUser(d,u.id)}}); }
   if (req.method === 'POST' && p.startsWith('/api/message-requests/') && p.endsWith('/accept')) { const rid=p.split('/')[3]; const r=d.messageRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Message request not found.'}); r.status='accepted'; if(!d.messages.some(m=>m.fromId===r.fromId&&m.toId===u.id&&r.clientMessageId&&m.clientMessageId===r.clientMessageId))d.messages.push({id:id(),fromId:r.fromId,toId:u.id,content:r.message,clientMessageId:r.clientMessageId||null,createdAt:r.createdAt,readAt:null}); save(d); return send(res,200,{ok:true}); }
   if (req.method === 'POST' && p.startsWith('/api/message-requests/') && p.endsWith('/decline')) { const rid=p.split('/')[3]; const r=d.messageRequests.find(x=>x.id===rid&&x.toId===u.id&&x.status==='pending'); if(!r)return send(res,404,{error:'Message request not found.'}); r.status='declined'; save(d); return send(res,200,{ok:true}); }
@@ -1000,6 +1006,7 @@ async function api(req, res) {
 
 async function startServer() {
   await initRemoteDatabase();
+  try { cleanSocial(db()); } catch (e) { console.error('Initial social normalization failed:', e.message); }
   setInterval(()=>{try{cleanupTrash(db())}catch(e){console.error('Trash cleanup failed:',e.message)}}, 60*60*1000);
 
   const server=http.createServer(async(req,res)=>{
