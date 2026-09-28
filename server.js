@@ -756,7 +756,8 @@ async function api(req, res) {
     const userId=p.split('/').pop(); const profile=d.users.find(x=>x.id===userId);
     if(!profile) return send(res,404,{error:'User not found.'});
     const visible = accountVisible(d,userId,u);
-    const relationship = { following:isFollowing(d,u.id,userId), follower:isFollowing(d,userId,u.id), friends:areFriends(d,u.id,userId), pendingFollow:!!d.followRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending'), pendingFriend:!!d.friendRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending') };
+    const incomingFollowRequest=d.followRequests.find(x=>x.fromId===userId&&x.toId===u.id&&x.status==='pending');
+    const relationship = { following:isFollowing(d,u.id,userId), follower:isFollowing(d,userId,u.id), friends:areFriends(d,u.id,userId), pendingFollow:!!d.followRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending'), pendingFriend:!!d.friendRequests.find(x=>x.fromId===u.id&&x.toId===userId&&x.status==='pending'), incomingFollowRequest:incomingFollowRequest?{id:incomingFollowRequest.id,from:publicUser(d,incomingFollowRequest.fromId),createdAt:incomingFollowRequest.createdAt}:null };
     const books=visible?d.books.filter(b=>b.userId===userId&&!b.deletedAt&&b.visibility==='public').sort((a,b)=>b.updatedAt-a.updatedAt).map(b=>publicBookSummary(b,d)):[];
     const diaries=visible?d.diaries.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicDiary(x,d)):[];
     const posts=visible?d.posts.filter(x=>x.userId===userId&&!x.deletedAt&&visibilityAllowed(d,x.visibility||'private',x.userId,u)&&!x.archivedAt).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicPost(x,d)):[];    const reposts=visible?d.reposts.filter(x=>x.userId===userId).sort((a,b)=>b.createdAt-a.createdAt).map(x=>publicRepost(x,d,u.id)).filter(Boolean):[];
