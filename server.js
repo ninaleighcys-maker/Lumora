@@ -711,7 +711,20 @@ async function api(req, res) {
   if (req.method === 'GET' && p === '/api/search') {
     const q=searchable(url.searchParams.get('q')).trim();
     if(!q) return send(res,200,{books:[],people:[],diaries:[],posts:[]});
-    const people=d.users.filter(x=>accountVisible(d,x.id,u)&& (searchable(x.username).includes(q)||searchable(x.name).includes(q))).map(x=>({id:x.id,username:x.username,name:x.name,bio:x.bio,avatarUrl:x.avatarUrl||''})).slice(0,20);
+    const people=d.users
+      .filter(x=>searchable(x.username).includes(q)||searchable(x.name).includes(q))
+      .slice(0,20)
+      .map(x=>{
+        const visible=accountVisible(d,x.id,u);
+        return {
+          id:x.id,
+          username:x.username,
+          name:x.name,
+          bio:visible?(x.bio||''):'',
+          avatarUrl:visible?(x.avatarUrl||''):'',
+          accountPrivacy:x.accountPrivacy||'public'
+        };
+      });
     const books=d.books.filter(b=>b.visibility==='public' && !b.deletedAt && accountVisible(d,b.userId,u)).filter(b=>[b.title,b.description,b.genre,(b.tags||[]).join(' '),publicUser(d,b.userId).username,publicUser(d,b.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(b=>publicBookSummary(b,d));
     const diaries=d.diaries.filter(x=>!x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.title,x.content,x.mood,x.weather,x.season,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicDiary(x,d,u.id));
     const posts=d.posts.filter(x=>!x.archivedAt && !x.deletedAt && visibilityAllowed(d,x.visibility||'private',x.userId,u)).filter(x=>[x.content,publicUser(d,x.userId).username,publicUser(d,x.userId).name].some(v=>searchable(v).includes(q))).slice(0,30).map(x=>publicPost(x,d,u.id));
