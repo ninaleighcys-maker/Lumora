@@ -856,12 +856,26 @@ async function api(req, res) {
     const c={id:id(),userId:u.id,targetType,targetId,parentId,content,mentionUserIds:extractMentionUserIds(d,content),createdAt:Date.now()}; d.comments.push(c);
     if(targetType==='post'||targetType==='diary')notify(d,target.userId,parentId?'reply':'comment',u.id,parentId?(u.name||'@'+u.username)+' replied to your comment.':(u.name||'@'+u.username)+' commented on your '+targetType+'.',targetType,targetId);
     if(parentId){const parent=d.comments.find(item=>item.id===parentId);if(parent)notify(d,parent.userId,'reply',u.id,(u.name||'@'+u.username)+' replied to your comment.',targetType,targetId);}
+    const subscriberIds=new Set(d.comments.filter(item=>item.targetType===targetType&&item.targetId===targetId&&item.userId!==u.id).map(item=>item.userId));
+    if(parentId){const parent=d.comments.find(item=>item.id===parentId);if(parent)subscriberIds.delete(parent.userId);}
+    for(const recipientId of subscriberIds)notify(d,recipientId,'comment_activity',u.id,(u.name||'@'+u.username)+' commented on a '+targetType+' you also commented on.',targetType,targetId);
     notifyMentions(d,u,c.mentionUserIds,targetType,targetId,'mentioned you in a comment'); save(d); return send(res,201,{comment:publicComment(c,d)});
   }
 
   if (req.method === 'GET' && p === '/api/comments') {
     const type=url.searchParams.get('targetType');const targetId=url.searchParams.get('targetId'); if(!targetAllowed(d,type,targetId,u))return send(res,404,{error:'Content not found.'});
     return send(res,200,{comments:d.comments.filter(c=>c.targetType===type&&c.targetId===targetId).sort((a,b)=>a.createdAt-b.createdAt).map(c=>publicComment(c,d))});
+  }
+
+  if (req.method === 'PUT' && p.startsWith('/api/reading-progress/')) {
+    const bookId=p.split('/').pop(); const b=d.books.find(x=>x.id===bookId&&!x.deletedAt);
+    if(!b || (b.userId!==u.id && b.visibility!=='public')) return send(res,404,{error:'Book not found.'});
+    const x=await body(req); const chapterId=String(x.chapterId||''); const chapter=b.chapters.find(c=>c.id===chapterId);
+    if(!chapter)return send(res,404,{error:'Chapter not found.'});
+    const scrollTop=Math.max(0,Number(x.scrollTop||0)); let rp=d.readingProgress.find(v=>v.userId===u.id&&v.bookId===bookId);
+    if(rp){rp.chapterId=chapterId;rp.pageNumber=b.chapters.findIndex(c=>c.id===chapterId)+1;rp.scrollTop=scrollTop;rp.updatedAt=Date.now();}
+    else{rp={id:id(),userId:u.id,bookId,chapterId,pageNumber:b.chapters.findIndex(c=>c.id===chapterId)+1,scrollTop,updatedAt:Date.now(),createdAt:Date.now()};d.readingProgress.push(rp);}
+    save(d); return send(res,200,{ok:true,readingProgress:rp});
   }
 
   if (req.method === 'GET' && p.startsWith('/api/books/') && p.endsWith('/stats')) {
@@ -878,11 +892,11 @@ async function api(req, res) {
       const c=b.chapters.find(x=>x.id===chapterId);if(!c)return send(res,404,{error:'Chapter not found.'});
       const pageNumber=b.chapters.findIndex(x=>x.id===chapterId)+1;
       const rp=d.readingProgress.find(x=>x.userId===u.id&&x.bookId===bookId);
-      if(rp){rp.chapterId=chapterId;rp.pageNumber=pageNumber;rp.updatedAt=Date.now();} else d.readingProgress.push({id:id(),userId:u.id,bookId,chapterId,pageNumber,updatedAt:Date.now(),createdAt:Date.now()});
+      if(rp){rp.chapterId=chapterId;rp.pageNumber=pageNumber;rp.scrollTop=0;rp.updatedAt=Date.now();} else d.readingProgress.push({id:id(),userId:u.id,bookId,chapterId,pageNumber,scrollTop:0,updatedAt:Date.now(),createdAt:Date.now()});
       if(!d.bookReads.some(x=>x.userId===u.id&&x.bookId===bookId)) d.bookReads.push({id:id(),userId:u.id,bookId,createdAt:Date.now()});
       if(!d.chapterReads.some(x=>x.userId===u.id&&x.bookId===bookId&&x.chapterId===chapterId)) d.chapterReads.push({id:id(),userId:u.id,bookId,chapterId,createdAt:Date.now()});
       save(d);
-      return send(res,200,{book:publicBook(b,d,u.id),chapter:publicChapter(c),pageNumber,comments:d.comments.filter(x=>x.targetType==='chapter'&&x.targetId===c.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)})),highlights:d.highlights.filter(x=>x.userId===u.id&&x.chapterId===c.id),bookmark:d.bookmarks.find(x=>x.userId===u.id&&x.chapterId===c.id)||null});
+      return send(res,200,{book:publicBook(b,d,u.id),chapter:publicChapter(c),pageNumber,scrollTop:Math.max(0,Number(rp?.scrollTop||0)),comments:d.comments.filter(x=>x.targetType==='chapter'&&x.targetId===c.id).sort((a,b)=>a.createdAt-b.createdAt).map(c=>({...c,author:publicUser(d,c.userId)})),highlights:d.highlights.filter(x=>x.userId===u.id&&x.chapterId===c.id),bookmark:d.bookmarks.find(x=>x.userId===u.id&&x.chapterId===c.id)||null});
     }
     if(!d.bookReads.some(x=>x.userId===u.id&&x.bookId===bookId)) { d.bookReads.push({id:id(),userId:u.id,bookId,createdAt:Date.now()}); save(d); }
     return send(res,200,{book:publicBook(b,d,u.id)});
