@@ -3,6 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const nodemailer = require('nodemailer');
 const { Pool } = require('pg');
 
@@ -170,8 +171,22 @@ function safeUser(u) {
   return u && { id: u.id, username: u.username, name: u.name, email: u.email, emailVerified: !!u.emailVerified, bio: u.bio, avatarUrl: u.avatarUrl || '', coverUrl: u.coverUrl || '', favoriteQuote: u.favoriteQuote || '', theme: u.theme || 'Rose', accountPrivacy: u.accountPrivacy || 'public', messagePermission: u.messagePermission || 'everyone', createdAt: u.createdAt };
 }
 function send(res, status, data, headers = {}) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
-  res.end(JSON.stringify(data));
+  const payload=Buffer.from(JSON.stringify(data));
+  const accept=String(res.req?.headers?.['accept-encoding']||'');
+  const baseHeaders={ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers };
+  if(accept.includes('gzip') && payload.length>1024){
+    zlib.gzip(payload,{level:6},(err,compressed)=>{
+      if(err){
+        res.writeHead(status,baseHeaders);
+        return res.end(payload);
+      }
+      res.writeHead(status,{...baseHeaders,'Content-Encoding':'gzip','Vary':'Accept-Encoding'});
+      res.end(compressed);
+    });
+    return;
+  }
+  res.writeHead(status,baseHeaders);
+  res.end(payload);
 }
 function body(req) {
   return new Promise((resolve, reject) => {
